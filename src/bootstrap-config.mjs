@@ -39,6 +39,17 @@ function mergeProfiles(current, portable) {
   };
 }
 
+function materializeHome(value, homeDir) {
+  if (typeof value === "string") return value.replaceAll("__HOME__", homeDir);
+  if (Array.isArray(value)) return value.map((item) => materializeHome(item, homeDir));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, materializeHome(item, homeDir)]),
+    );
+  }
+  return value;
+}
+
 async function writeJson(filePath, value) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
@@ -76,6 +87,7 @@ export async function installWorkbench({ homeDir, repoRoot, replaceExisting = fa
   const piDir = path.join(homeDir, ".pi/agent");
   const settingsPath = path.join(piDir, "settings.json");
   const profilesPath = path.join(piDir, "project-profiles.json");
+  const mcpPath = path.join(piDir, "mcp.json");
   const subagentPath = path.join(piDir, "extensions/subagent/config.json");
 
   const currentSettings = await readJson(settingsPath);
@@ -90,5 +102,13 @@ export async function installWorkbench({ homeDir, repoRoot, replaceExisting = fa
   const portableSubagent = await readJson(path.join(configRoot, "subagent-config.json"));
   await writeJson(subagentPath, { ...currentSubagent, ...portableSubagent });
 
-  return { extensionPath, extensionBackup, settingsPath, profilesPath, subagentPath };
+  const currentMcp = await readJson(mcpPath);
+  const portableMcp = materializeHome(await readJson(path.join(configRoot, "mcp.json")), homeDir);
+  await writeJson(mcpPath, {
+    ...currentMcp,
+    ...portableMcp,
+    mcpServers: { ...(currentMcp.mcpServers ?? {}), ...(portableMcp.mcpServers ?? {}) },
+  });
+
+  return { extensionPath, extensionBackup, settingsPath, profilesPath, mcpPath, subagentPath };
 }

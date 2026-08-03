@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import path from "node:path";
 
 import {
   buildProfileChoices,
@@ -60,7 +58,7 @@ test("profile normalization bounds tools, policies, and verification instruction
 
 test("writing profile is vendor-neutral and verifies documentation quality", async () => {
   const [config, quickstart] = await Promise.all([
-    readFile(path.join(homedir(), ".pi", "agent", "project-profiles.json"), "utf8")
+    readFile(new URL("../config/pi/project-profiles.json", import.meta.url), "utf8")
       .then(JSON.parse),
     readFile(new URL("../QUICKSTART.md", import.meta.url), "utf8")
   ]);
