@@ -49,7 +49,8 @@ The Git boundary is intentional. Source, tests, documentation, and sanitized
 configuration are tracked. OAuth credentials, MCP state, raw Pi sessions,
 Obsidian journal content, SQLite/runtime state, caches, dependencies, and built
 applications are not tracked. Journal retention and Drive rehydration continue
-to operate independently of this repository.
+to operate independently of this repository. GitHub Actions runs the extension
+suite and rendered-guide test for every push and pull request.
 
 ## Start and navigate
 
