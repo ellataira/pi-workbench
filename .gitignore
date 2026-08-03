@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.next/
+.vinext/
+.wrangler/
+.DS_Store
+
+# Local agent state and credentials are never repository data.
+auth.json
+mcp.json
+mcp-oauth/
+sessions/
+runtime/
+*.jsonl
+*.log
+*.tmp
+.env*
+.npmrc
+*.pem
+*.key
