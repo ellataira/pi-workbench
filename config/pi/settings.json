@@ -1,0 +1,21 @@
+{
+  "packages": [
+    "../../.agents/extensions/agent-journal",
+    "npm:pi-mcp-adapter@2.12.1",
+    "npm:pi-subagents@0.35.1",
+    "npm:context-mode@1.0.169",
+    "npm:pi-markdown-preview@0.10.1",
+    "npm:pi-powerline-footer@0.7.0",
+    "npm:@juicesharp/rpiv-ask-user-question@2.1.0"
+  ],
+  "theme": "light",
+  "powerline": {
+    "preset": "default",
+    "fixedEditor": false,
+    "placement": "below",
+    "welcome": true,
+    "mouseScroll": false
+  },
+  "showLastPrompt": false,
+  "defaultThinkingLevel": "medium"
+}

@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { installWorkbench, mergePiSettings } from "../src/bootstrap-config.mjs";
+
+test("portable settings merge preserves machine-specific packages and provider", () => {
+  const current = {
+    packages: ["../../dd/private-package", "npm:pi-subagents@0.35.1"],
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet",
+  };
+  const portable = {
+    packages: ["../../.agents/extensions/agent-journal", "npm:pi-subagents@0.35.1"],
+    theme: "light",
+  };
+
+  assert.deepEqual(mergePiSettings(current, portable), {
+    packages: [
+      "../../dd/private-package",
+      "npm:pi-subagents@0.35.1",
+      "../../.agents/extensions/agent-journal",
+    ],
+    defaultProvider: "anthropic",
+    defaultModel: "claude-sonnet",
+    theme: "light",
+  });
+});
+test("installation backs up an existing extension and writes merged config", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "pi-workbench-test-"));
+  const homeDir = path.join(root, "home");
+  const repoRoot = path.join(root, "repo");
+  const extensionPath = path.join(homeDir, ".agents/extensions/agent-journal");
+  const piDir = path.join(homeDir, ".pi/agent");
+  await mkdir(path.join(repoRoot, "config/pi"), { recursive: true });
+  await mkdir(extensionPath, { recursive: true });
+  await mkdir(piDir, { recursive: true });
+  await writeFile(path.join(extensionPath, "old.txt"), "old source\n");
+  await writeFile(
+    path.join(piDir, "settings.json"),
+    JSON.stringify({ packages: ["local-package"], defaultProvider: "openai" }),
+  );
+  await writeFile(
+    path.join(repoRoot, "config/pi/settings.json"),
+    JSON.stringify({ packages: ["workbench-package"], theme: "light" }),
+  );
+  await writeFile(path.join(repoRoot, "config/pi/project-profiles.json"), "{}\n");
+  await writeFile(path.join(repoRoot, "config/pi/subagent-config.json"), "{}\n");
+
+  const result = await installWorkbench({ homeDir, repoRoot, replaceExisting: true });
+
+  assert.equal(await realpath(extensionPath), await realpath(repoRoot));
+  assert.match(result.extensionBackup, /agent-journal\.backup-/);
+  assert.equal(await readFile(path.join(result.extensionBackup, "old.txt"), "utf8"), "old source\n");
+  const installed = JSON.parse(await readFile(path.join(piDir, "settings.json"), "utf8"));
+  assert.deepEqual(installed.packages, ["local-package", "workbench-package"]);
+  assert.equal(installed.defaultProvider, "openai");
+  assert.equal(installed.theme, "light");
+});

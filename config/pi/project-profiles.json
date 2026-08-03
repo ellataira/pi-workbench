@@ -1,0 +1,29 @@
+{
+  "profiles": {
+    "implementation": {
+      "thinkingLevel": "medium",
+      "agentPolicy": { "maxConcurrency": 4, "oneWriterPerCheckout": true },
+      "verification": ["tests", "docs"]
+    },
+    "quick-fix": {
+      "thinkingLevel": "low",
+      "agentPolicy": { "maxConcurrency": 1, "oneWriterPerCheckout": true },
+      "verification": ["focused-tests"]
+    },
+    "research": {
+      "thinkingLevel": "medium",
+      "agentPolicy": { "maxConcurrency": 4, "oneWriterPerCheckout": false },
+      "verification": ["source-provenance"]
+    },
+    "writing": {
+      "thinkingLevel": "medium",
+      "agentPolicy": { "maxConcurrency": 1, "oneWriterPerCheckout": true },
+      "verification": ["source-accuracy", "links-and-commands", "docs-consistency"]
+    },
+    "sensitive": {
+      "thinkingLevel": "high",
+      "agentPolicy": { "maxConcurrency": 1, "oneWriterPerCheckout": true },
+      "verification": ["explicit-approval", "tests", "docs"]
+    }
+  }
+}

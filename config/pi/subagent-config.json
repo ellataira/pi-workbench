@@ -1,0 +1,11 @@
+{
+  "toolDescriptionMode": "compact",
+  "asyncByDefault": true,
+  "asyncWidget": true,
+  "globalConcurrencyLimit": 4,
+  "maxSubagentSpawnsPerSession": 12,
+  "parallel": { "maxTasks": 8, "concurrency": 4 },
+  "defaultSessionDir": "~/.pi/agent/sessions/subagent/",
+  "maxSubagentDepth": 1,
+  "worktreeBaseDir": "~/.pi/agent/worktrees"
+}
