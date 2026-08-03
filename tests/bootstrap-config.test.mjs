@@ -48,6 +48,15 @@ test("installation backs up an existing extension and writes merged config", asy
   );
   await writeFile(path.join(repoRoot, "config/pi/project-profiles.json"), "{}\n");
   await writeFile(path.join(repoRoot, "config/pi/subagent-config.json"), "{}\n");
+  await writeFile(
+    path.join(repoRoot, "config/pi/mcp.json"),
+    JSON.stringify({
+      imports: [],
+      mcpServers: {
+        slack: { command: "python3", args: ["__HOME__/.agents/slack-proxy.py"] },
+      },
+    }),
+  );
 
   const result = await installWorkbench({ homeDir, repoRoot, replaceExisting: true });
 
@@ -58,4 +67,11 @@ test("installation backs up an existing extension and writes merged config", asy
   assert.deepEqual(installed.packages, ["local-package", "workbench-package"]);
   assert.equal(installed.defaultProvider, "openai");
   assert.equal(installed.theme, "light");
+  const installedMcp = JSON.parse(await readFile(path.join(piDir, "mcp.json"), "utf8"));
+  assert.deepEqual(installedMcp, {
+    imports: [],
+    mcpServers: {
+      slack: { command: "python3", args: [`${homeDir}/.agents/slack-proxy.py`] },
+    },
+  });
 });

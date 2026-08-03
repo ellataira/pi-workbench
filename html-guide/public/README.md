@@ -45,8 +45,9 @@ with the required Apple build tools:
 npm run build:pet
 ```
 
-The Git boundary is intentional. Source, tests, documentation, and sanitized
-configuration are tracked. OAuth credentials, MCP state, raw Pi sessions,
+The Git boundary is intentional. Source, tests, documentation, sanitized Pi
+configuration, and credential-free MCP connection definitions are tracked.
+OAuth credentials, MCP authentication state, raw Pi sessions,
 Obsidian journal content, SQLite/runtime state, caches, dependencies, and built
 applications are not tracked. Journal retention and Drive rehydration continue
 to operate independently of this repository. GitHub Actions runs the extension

@@ -1,10 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 
-const configPath = join(homedir(), ".pi", "agent", "mcp.json");
+const configPath = new URL("../config/pi/mcp.json", import.meta.url);
 
 async function loadConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
@@ -55,7 +53,7 @@ test("Slack uses the shared Keychain proxy without starting Pi OAuth", async () 
   const config = await loadConfig();
   assert.equal(config.mcpServers.slack.command, "python3");
   assert.deepEqual(config.mcpServers.slack.args, [
-    join(homedir(), ".agents", "skills", "slack-mcp", "scripts", "slack-mcp-proxy.py")
+    "__HOME__/.agents/skills/slack-mcp/scripts/slack-mcp-proxy.py"
   ]);
   assert.equal("url" in config.mcpServers.slack, false);
   assert.equal("oauth" in config.mcpServers.slack, false);

@@ -6,11 +6,11 @@ dist/
 .DS_Store
 
 # Local agent state and credentials are never repository data.
-auth.json
-mcp.json
-mcp-oauth/
-sessions/
-runtime/
+/auth.json
+/mcp.json
+/mcp-oauth/
+/sessions/
+/runtime/
 *.jsonl
 *.log
 *.tmp

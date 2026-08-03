@@ -25,11 +25,12 @@ extension before replacing it and merges portable configuration without
 removing machine-specific packages or model settings. Restart Pi or run
 `/reload` afterward.
 
-Git stores the implementation and sanitized configuration only. It never
-stores OAuth data, MCP state, prompts, transcripts, Pi sessions, Obsidian
-journal entries, memory databases, runtime state, caches, dependencies, or
-compiled applications. `npm run build:pet` is optional and requires the Apple
-build tools.
+Git stores the implementation, sanitized Pi configuration, and
+credential-free MCP connection definitions. It never stores OAuth data, MCP
+authentication state, prompts, transcripts, Pi sessions, Obsidian journal
+entries, memory databases, runtime state, caches, dependencies, or compiled
+applications. `npm run build:pet` is optional and requires the Apple build
+tools.
 
 ## New command quick reference
 

@@ -18,6 +18,7 @@ try {
   console.log(`Pi workbench linked: ${result.extensionPath} -> ${repoRoot}`);
   if (result.extensionBackup) console.log(`Previous extension backed up: ${result.extensionBackup}`);
   console.log(`Pi settings merged: ${result.settingsPath}`);
+  console.log(`MCP definitions merged: ${result.mcpPath}`);
   console.log("Restart Pi or run /reload to load the repository version.");
 } catch (error) {
   console.error(`Bootstrap failed: ${error.message}`);
