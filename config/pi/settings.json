@@ -17,5 +17,10 @@
     "mouseScroll": false
   },
   "showLastPrompt": false,
-  "defaultThinkingLevel": "medium"
+  "defaultThinkingLevel": "medium",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 49152,
+    "keepRecentTokens": 20000
+  }
 }

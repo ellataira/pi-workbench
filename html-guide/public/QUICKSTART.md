@@ -250,6 +250,15 @@ Open-weight providers can be added later without redesigning those layers.
 
 Pi stores native sessions under `~/.pi/agent/sessions/`.
 
+Automatic compaction keeps a 49,152-token safety reserve and retains roughly
+20,000 recent tokens. For the installed 272k-context model this triggers near
+222,848 tokens, leaving enough room for a long tool-driven turn and the single
+pre-compaction journal checkpoint. A `maximum output token limit` message with
+only a tiny partial response usually means the combined context was exhausted,
+not that the answer itself reached the model's 128k output allowance. Use
+`/compact` manually if an unusually large turn is already underway near the
+threshold.
+
 Use `/tree` when the alternatives belong to one line of thought. Use `/fork`
 when the new direction should become an independently resumable session.
 
