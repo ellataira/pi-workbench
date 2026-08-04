@@ -151,6 +151,12 @@ Inside Pi:
   semantic checkpoint, and resumes compaction afterward. Hard context overflow
   fails open after that single attempt so recovery cannot loop or strand the
   session. The former reconciler remains paused.
+- Pi reserves 49,152 context tokens before automatic compaction and retains
+  roughly 20,000 recent tokens afterward. The larger reserve prevents a long
+  tool-driven turn from consuming the final context space before Pi's
+  post-agent compaction check can run. The journal's single pre-compaction
+  checkpoint attempt uses this reserved runway rather than delaying an already
+  overflowing session.
 - `/diary` is a compatibility route; the old diary is frozen.
 - A launchd reminder runs at 09:00 America/New_York, adds the fixed
   `daily-distillation` action to Paddington's inbox, and displays a macOS

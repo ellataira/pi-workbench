@@ -6,6 +6,18 @@ import test from "node:test";
 
 import { installWorkbench, mergePiSettings } from "../src/bootstrap-config.mjs";
 
+test("portable settings reserve enough context for long tool-driven turns", async () => {
+  const settings = JSON.parse(
+    await readFile(new URL("../config/pi/settings.json", import.meta.url), "utf8"),
+  );
+
+  assert.deepEqual(settings.compaction, {
+    enabled: true,
+    reserveTokens: 49152,
+    keepRecentTokens: 20000,
+  });
+});
+
 test("portable settings merge preserves machine-specific packages and provider", () => {
   const current = {
     packages: ["../../dd/private-package", "npm:pi-subagents@0.35.1"],
