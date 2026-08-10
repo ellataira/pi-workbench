@@ -53,37 +53,65 @@ export function requireOwnedWorkspace(entries, workspace) {
   return entry;
 }
 
-export function buildChildCommand({
+export function buildChildCommand({ includeTask = true } = {}) {
+  const task = includeTask ? `task="$PI_CMUX_CHILD_TASK"; ` : "";
+  const taskArgument = includeTask ? ` "$task"` : "";
+  return `${task}session="$PI_CMUX_CHILD_SESSION_ID"; name="$PI_CMUX_CHILD_NAME"; unset PI_CMUX_CHILD_TASK PI_CMUX_CHILD_SESSION_ID PI_CMUX_CHILD_NAME; exec pi --session-id "$session" --name "$name"${taskArgument}`;
+}
+
+export function buildChildEnvironment({
   sessionId,
   name,
   task,
   parentSessionId,
   childClass = "substantial"
 }) {
-  const environment = [
-    ["AGENT_JOURNAL_PARENT_CLIENT", "pi"],
-    ["AGENT_JOURNAL_PARENT_SESSION_ID", parentSessionId],
-    ["AGENT_JOURNAL_CHILD_CLASS", childClass]
-  ]
-    .map(([key, value]) => `${key}=${shellQuote(value)}`)
-    .join(" ");
-  return `${environment} pi --session-id ${shellQuote(sessionId)} --name ${shellQuote(name)} ${shellQuote(task)}`;
+  return [
+    `AGENT_JOURNAL_PARENT_CLIENT=pi`,
+    `AGENT_JOURNAL_PARENT_SESSION_ID=${parentSessionId}`,
+    `AGENT_JOURNAL_CHILD_CLASS=${childClass}`,
+    `PI_CMUX_CHILD_SESSION_ID=${sessionId}`,
+    `PI_CMUX_CHILD_NAME=${name}`,
+    `PI_CMUX_CHILD_TASK=${task}`
+  ];
 }
 
-export function buildSpawnArguments({ name, cwd, command }) {
-  return [
+export function buildShellReadyCommand(readyPath) {
+  return `: > ${shellQuote(readyPath)}`;
+}
+
+export function buildSpawnArguments({ name, cwd, environment = [] }) {
+  const args = [
     "--id-format",
     "both",
     "new-workspace",
     "--name",
     name,
     "--cwd",
-    cwd,
-    "--command",
-    command,
-    "--focus",
-    "false"
+    cwd
   ];
+  for (const value of environment) args.push("--env", value);
+  args.push("--focus", "false");
+  return args;
+}
+
+export async function waitForPath(
+  targetPath,
+  {
+    exists,
+    timeoutMs = 20_000,
+    intervalMs = 100,
+    sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+  }
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    if (await exists(targetPath)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for child startup marker: ${targetPath}`);
+    }
+    await sleep(intervalMs);
+  }
 }
 
 export function buildAgentChoices(children = []) {

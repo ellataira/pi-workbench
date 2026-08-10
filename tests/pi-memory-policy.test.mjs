@@ -7,12 +7,14 @@ import {
   assistantRunFailed,
   autoCheckpointMessage,
   checkpointCadenceFromEntries,
+  classifyCheckpointTurn,
   checkpointSourceEntries,
   compressedTitle,
   createRunState,
   dailyDistillationMessage,
   driveWorkspaceFallback,
   formatRecallContext,
+  recallUsageMetric,
   recordToolCompletion,
   recordToolStart,
   summaryCopiesConversation,
@@ -41,6 +43,27 @@ test("proactive recall skips greetings, commands, and checkpoint turns", () => {
 
 test("automatic recall has a small fixed injection budget", () => {
   assert.deepEqual(automaticRecallDefaults, { limit: 3, tokenBudget: 400 });
+});
+
+test("recall usage telemetry contains counts but no query or memory content", () => {
+  const result = {
+    items: [
+      { title: "SENSITIVE MEMORY", excerpt: "SENSITIVE EXCERPT" },
+      { rehydration: { driveFileId: "drive-id" } }
+    ]
+  };
+  const metric = recallUsageMetric(result, {
+    repository: "datadog-agent",
+    recordedAt: "2026-08-10T12:00:00.000Z"
+  });
+  assert.deepEqual(metric, {
+    recordedAt: "2026-08-10T12:00:00.000Z",
+    repository: "datadog-agent",
+    resultCount: 2,
+    coldResultCount: 1,
+    tokenBudget: 400
+  });
+  assert.doesNotMatch(JSON.stringify(metric), /SENSITIVE/);
 });
 
 test("successful substantive tools require one checkpoint backstop", () => {
@@ -120,6 +143,21 @@ test("read-only and clarification turns never flush coalesced work", () => {
     }),
     false
   );
+});
+
+test("opening the review UI is read-only and does not queue a checkpoint", () => {
+  const state = createRunState("Open these files in the viewer");
+  recordToolCompletion(state, { toolName: "review_open", isError: false });
+
+  assert.equal(state.successfulTools, 0);
+  assert.equal(shouldQueueAutoCheckpoint(state, assistant("Review opened.")), false);
+});
+
+test("starting or inspecting pair mode does not queue a checkpoint", () => {
+  const state = createRunState("Start a visible pair terminal");
+  recordToolCompletion(state, { toolName: "pair_terminal", isError: false });
+  assert.equal(state.successfulTools, 0);
+  assert.equal(shouldQueueAutoCheckpoint(state, assistant("Pair terminal started.")), false);
 });
 
 test("checkpoint cadence restores the latest safe metadata entry", () => {
@@ -313,6 +351,21 @@ test("checkpoint follow-up never recursively checkpoints itself", () => {
   assert.equal(state.checkpointRun, true);
   assert.equal(shouldQueueAutoCheckpoint(state, assistant("Checkpoint failed.")), false);
   assert.match(autoCheckpointMessage(), new RegExp(AUTO_CHECKPOINT_MARKER));
+  assert.match(autoCheckpointMessage(), /reply with exactly: Memory checkpoint saved\./);
+  assert.doesNotMatch(autoCheckpointMessage(), /no additional narrative/);
+});
+
+test("a pending automatic checkpoint never hijacks an intervening user prompt", () => {
+  assert.deepEqual(classifyCheckpointTurn("retry", true), {
+    checkpointRun: false,
+    automaticCheckpoint: false,
+    consumePendingAutomaticCheckpoint: false
+  });
+  assert.deepEqual(classifyCheckpointTurn(autoCheckpointMessage(), true), {
+    checkpointRun: true,
+    automaticCheckpoint: true,
+    consumePendingAutomaticCheckpoint: true
+  });
 });
 
 test("daily distillation cannot create a session checkpoint loop", () => {

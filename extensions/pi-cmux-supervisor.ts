@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -9,13 +9,15 @@ import { Type } from "typebox";
 import {
 	buildAgentChoices,
 	buildChildCommand,
+	buildChildEnvironment,
+	buildShellReadyCommand,
 	buildSpawnArguments,
 	buildWorktreeArguments,
 	childWorktreePlan,
 	orchestrationPolicy,
 	parseWorkspaceIdentifiers,
 	requireOwnedWorkspace,
-	shellQuote,
+	waitForPath,
 } from "../src/cmux-supervisor.mjs";
 import {
 	classifyOwnedWorktree,
@@ -42,6 +44,9 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	const worktreeBaseDir =
 		process.env.PI_CMUX_WORKTREE_BASE ??
 		path.join(homedir(), ".pi", "agent", "worktrees");
+	const launchRuntimeDir =
+		process.env.PI_CMUX_LAUNCH_RUNTIME ??
+		path.join(homedir(), ".pi", "agent", "cmux-launches");
 	let registryMutation = Promise.resolve();
 
 	type OwnedChild = {
@@ -105,6 +110,68 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			throw new Error(result.stderr.trim() || result.stdout.trim() || `cmux exited ${result.code}`);
 		}
 		return result.stdout.trim();
+	}
+
+	async function launchWorkspace({
+		sessionId,
+		name,
+		cwd,
+		command,
+		environment,
+	}: {
+		sessionId: string;
+		name: string;
+		cwd: string;
+		command: string;
+		environment: string[];
+	}) {
+		await mkdir(launchRuntimeDir, { recursive: true, mode: 0o700 });
+		const shellReadyPath = path.join(launchRuntimeDir, `${sessionId}.shell-ready`);
+		const childStartedPath = path.join(launchRuntimeDir, `${sessionId}.child-started`);
+		await Promise.all([
+			rm(shellReadyPath, { force: true }),
+			rm(childStartedPath, { force: true }),
+		]);
+
+		let identifiers: string[] | undefined;
+		try {
+			const output = await cmux(
+				buildSpawnArguments({
+					name: `Pi · ${name}`,
+					cwd,
+					environment: [
+						...environment,
+						`PI_CMUX_CHILD_STARTED_PATH=${childStartedPath}`,
+					],
+				}),
+			);
+			identifiers = parseWorkspaceIdentifiers(output);
+			const workspace = identifiers[0];
+			await cmux([
+				"send",
+				"--workspace",
+				workspace,
+				`${buildShellReadyCommand(shellReadyPath)}\\n`,
+			]);
+			await waitForPath(shellReadyPath, { exists: pathExists, timeoutMs: 10_000 });
+			await cmux(["send", "--workspace", workspace, `${command}\\n`]);
+			await waitForPath(childStartedPath, { exists: pathExists, timeoutMs: 30_000 });
+			return { identifiers, output };
+		} catch (error) {
+			if (identifiers?.[0]) {
+				try {
+					await cmux(["close-workspace", "--workspace", identifiers[0]]);
+				} catch {
+					// Preserve the launch error; cmux may already have closed the workspace.
+				}
+			}
+			throw error;
+		} finally {
+			await Promise.all([
+				rm(shellReadyPath, { force: true }),
+				rm(childStartedPath, { force: true }),
+			]);
+		}
 	}
 
 	async function spawn(
@@ -172,23 +239,23 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		worktree = { ...plan, repositoryRoot };
 		childCwd = plan.path;
 
-		const command = buildChildCommand({
-			sessionId,
-			name,
-			task: params.task,
-			parentSessionId,
-			childClass: "substantial",
-		});
+		const command = buildChildCommand();
 		let identifiers: string[] | undefined;
 		try {
-			const output = await cmux(
-				buildSpawnArguments({
-					name: `Pi · ${name}`,
-					cwd: childCwd,
-					command,
+			const launch = await launchWorkspace({
+				sessionId,
+				name,
+				cwd: childCwd,
+				command,
+				environment: buildChildEnvironment({
+					sessionId,
+					name,
+					task: params.task,
+					parentSessionId,
+					childClass: "substantial",
 				}),
-			);
-			identifiers = parseWorkspaceIdentifiers(output);
+			});
+			identifiers = launch.identifiers;
 			const child: OwnedChild = {
 				identifiers,
 				sessionId,
@@ -202,15 +269,8 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				baseCommit,
 			};
 			await appendRegistry(child);
-			return { ...child, output };
+			return { ...child, output: launch.output };
 		} catch (error) {
-			if (identifiers?.[0]) {
-				try {
-					await cmux(["close-workspace", "--workspace", identifiers[0]]);
-				} catch {
-					// Preserve the original failure; the orphan workspace remains visible in cmux.
-				}
-			}
 			if (worktree) {
 				await pi.exec("git", [
 					"-C",
@@ -320,15 +380,21 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		if (workspace.alive) {
 			throw new Error("The child workspace is already active");
 		}
-		const command = `pi --session-id ${shellQuote(plan.sessionId)} --name ${shellQuote(plan.name)}`;
-		const output = await cmux(
-			buildSpawnArguments({
-				name: `Pi · ${plan.name}`,
-				cwd: plan.cwd,
-				command,
-			}),
-		);
-		const identifiers = parseWorkspaceIdentifiers(output);
+		const command = buildChildCommand({ includeTask: false });
+		const launch = await launchWorkspace({
+			sessionId: plan.sessionId,
+			name: plan.name,
+			cwd: plan.cwd,
+			command,
+			environment: [
+				"AGENT_JOURNAL_PARENT_CLIENT=pi",
+				`AGENT_JOURNAL_PARENT_SESSION_ID=${child.parentSessionId}`,
+				"AGENT_JOURNAL_CHILD_CLASS=substantial",
+				`PI_CMUX_CHILD_SESSION_ID=${plan.sessionId}`,
+				`PI_CMUX_CHILD_NAME=${plan.name}`,
+			],
+		});
+		const identifiers = launch.identifiers;
 		await mutateRegistry((current) =>
 			current.map((candidate) =>
 				candidate.sessionId === child.sessionId
@@ -336,7 +402,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					: candidate,
 			),
 		);
-		return { ...plan, identifiers, output };
+		return { ...plan, identifiers, output: launch.output };
 	}
 
 	async function preparePatch(sessionId?: string) {
@@ -611,4 +677,13 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => ({
 		systemPrompt: `${event.systemPrompt}\n\n${orchestrationPolicy}\n`,
 	}));
+
+	pi.on("session_start", async (_event, ctx) => {
+		const startedPath = process.env.PI_CMUX_CHILD_STARTED_PATH;
+		if (!startedPath) return;
+		await writeFile(startedPath, `${ctx.sessionManager.getSessionId()}\n`, {
+			mode: 0o600,
+		});
+		delete process.env.PI_CMUX_CHILD_STARTED_PATH;
+	});
 }

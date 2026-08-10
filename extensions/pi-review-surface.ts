@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 import {
 	removeReviewSession,
@@ -49,6 +50,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		buildGitDiffArgs,
 		gitDiffReviewFilename,
 		recentTurnDiffFilename,
+		resolveGitReviewCwd,
 	} = await importFreshSourceModule(reviewGitDiffPath);
 	const reviewSuggestionsPath = fileURLToPath(
 		new URL("../src/review-suggestions.mjs", import.meta.url),
@@ -132,6 +134,20 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		return resolved;
 	}
 
+	async function reviewFiles(filePaths: string[], ctx = latestContext) {
+		if (!service) throw new Error("Review surface is not ready");
+		const resolved = filePaths.map((filePath) =>
+			path.resolve(
+				ctx?.cwd || process.cwd(),
+				parseReviewPathArgument(filePath),
+			),
+		);
+		await refreshRegistry(ctx);
+		const opened = await service.openFiles(resolved);
+		await openReviewUrl(opened.url);
+		return resolved;
+	}
+
 	async function clearRecentDiff() {
 		const previous = recentDiffPath;
 		recentDiffPath = "";
@@ -175,12 +191,17 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 				sourcePath: recentDiffPath,
 			}),
 		);
+		return recentDiffPath;
 	}
 
-	async function openGitReview(args: string, ctx: any) {
+	async function openGitReview(args: string, ctx: any, requestedCwd = "") {
+		const gitCwd = resolveGitReviewCwd(
+			ctx.cwd,
+			requestedCwd ? parseReviewPathArgument(requestedCwd) : "",
+		);
 		const gitArgs = buildGitDiffArgs(args);
 		const result = await execFileAsync("git", gitArgs, {
-			cwd: ctx.cwd,
+			cwd: gitCwd,
 			encoding: "utf8",
 			maxBuffer: MAX_DIFF_BYTES,
 			timeout: 15_000,
@@ -192,7 +213,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		await mkdir(generatedDiffDir, { recursive: true, mode: 0o700 });
 		const diffPath = path.join(
 			generatedDiffDir,
-			gitDiffReviewFilename(ctx.cwd, gitArgs),
+			gitDiffReviewFilename(gitCwd, gitArgs),
 		);
 		const temporary = `${diffPath}.${process.pid}.${Date.now()}.tmp`;
 		await writeFile(temporary, result.stdout, {
@@ -207,11 +228,12 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			ctx,
 			buildReviewDisplayMetadata({
 				kind: "git",
-				cwd: ctx.cwd,
+				cwd: gitCwd,
 				gitRequest: args.trim(),
 				sourcePath: diffPath,
 			}),
 		);
+		return diffPath;
 	}
 
 	async function reviewFileCandidates(ctx: any) {
@@ -301,6 +323,56 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			} catch (error) {
 				ctx.ui.notify(`Review UI failed: ${String(error)}`, "error");
 			}
+		},
+	});
+
+	pi.registerTool({
+		name: "review_open",
+		label: "Open review",
+		description:
+			"Open the review UI directly when the user asks to review files or a diff. Use this instead of telling the user to type /review. File mode accepts up to eight paths in one navigable review set; Git mode accepts staged, unstaged, a base ref, or an exact revision range; recent mode opens the immediately preceding Pi turn.",
+		parameters: Type.Object({
+			mode: Type.Union([
+				Type.Literal("files"),
+				Type.Literal("git"),
+				Type.Literal("recent"),
+			]),
+			files: Type.Optional(
+				Type.Array(Type.String({ maxLength: 1200 }), {
+					minItems: 1,
+					maxItems: 8,
+				}),
+			),
+			git: Type.Optional(Type.String({ maxLength: 300 })),
+			cwd: Type.Optional(Type.String({ maxLength: 1200 })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			latestContext = ctx;
+			let opened: string[] = [];
+			if (params.mode === "files") {
+				if (!params.files?.length) throw new Error("files mode requires at least one path");
+				opened = await reviewFiles(params.files, ctx);
+			} else if (params.mode === "git") {
+				const diffPath = await openGitReview(
+					params.git ?? "",
+					ctx,
+					params.cwd ?? "",
+				);
+				if (diffPath) opened = [diffPath];
+			} else {
+				const recentPath = await openRecentReview(ctx);
+				if (recentPath) opened = [recentPath];
+			}
+			const details = { mode: params.mode, opened };
+			return {
+				content: [{
+					type: "text",
+					text: opened.length
+						? `Opened review UI for ${opened.length} target${opened.length === 1 ? "" : "s"}.`
+						: "No reviewable content was available.",
+				}],
+				details,
+			};
 		},
 	});
 

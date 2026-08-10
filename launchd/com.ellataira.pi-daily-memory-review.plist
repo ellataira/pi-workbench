@@ -7,7 +7,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>__NODE_PATH__</string>
-    <string>__JOURNAL_ROOT__/bin/daily-review-reminder.mjs</string>
+    <string>__RUNTIME_ROOT__/bin/daily-review-reminder.mjs</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>

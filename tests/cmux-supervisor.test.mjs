@@ -5,12 +5,15 @@ import {
   buildAgentChoices,
   buildWorktreeArguments,
   buildChildCommand,
+  buildChildEnvironment,
+  buildShellReadyCommand,
   buildSpawnArguments,
   childWorktreePlan,
   orchestrationPolicy,
   parseWorkspaceIdentifiers,
   requireOwnedWorkspace,
-  shellQuote
+  shellQuote,
+  waitForPath
 } from "../src/cmux-supervisor.mjs";
 import { readFile } from "node:fs/promises";
 
@@ -18,26 +21,43 @@ test("quotes child tasks without allowing shell interpolation", () => {
   assert.equal(shellQuote("fix $(touch /tmp/nope) and 'quote'"), "'fix $(touch /tmp/nope) and '\\''quote'\\'''");
 });
 
-test("builds a persistent vendor-neutral Pi child command with journal lineage", () => {
-  const command = buildChildCommand({
+test("builds a short child command without embedding the task", () => {
+  const command = buildChildCommand();
+
+  assert.match(command, /PI_CMUX_CHILD_TASK/);
+  assert.match(command, /pi --session-id "\$session"/);
+  assert.match(command, /^task=/);
+  assert.match(command, /unset PI_CMUX_CHILD_TASK PI_CMUX_CHILD_SESSION_ID PI_CMUX_CHILD_NAME/);
+  assert.doesNotMatch(command, /Implement the cache/);
+  assert.doesNotMatch(command, /--provider|--model/);
+  assert.ok(Buffer.byteLength(command) < 512);
+});
+
+test("passes long tasks through the workspace environment instead of terminal input", () => {
+  const task = `Implement safely: ${"x".repeat(4000)}\nwith another line`;
+  const environment = buildChildEnvironment({
     sessionId: "child-123",
     name: "implement-cache",
-    task: "Implement the cache and run tests.",
+    task,
     parentSessionId: "parent-456",
     childClass: "substantial"
   });
 
-  assert.match(command, /AGENT_JOURNAL_PARENT_SESSION_ID='parent-456'/);
-  assert.match(command, /AGENT_JOURNAL_CHILD_CLASS='substantial'/);
-  assert.match(command, /pi --session-id 'child-123'/);
-  assert.doesNotMatch(command, /--provider|--model/);
+  assert.deepEqual(environment, [
+    "AGENT_JOURNAL_PARENT_CLIENT=pi",
+    "AGENT_JOURNAL_PARENT_SESSION_ID=parent-456",
+    "AGENT_JOURNAL_CHILD_CLASS=substantial",
+    "PI_CMUX_CHILD_SESSION_ID=child-123",
+    "PI_CMUX_CHILD_NAME=implement-cache",
+    "PI_CMUX_CHILD_TASK=" + task
+  ]);
 });
 
-test("builds a non-focused cmux workspace launch", () => {
+test("builds a non-focused workspace without an eager launch command", () => {
   const args = buildSpawnArguments({
     name: "Pi · implement-cache",
     cwd: "/Users/ella.taira/Desktop/datadog-agent",
-    command: "pi --session-id 'child-123'"
+    environment: ["PI_CMUX_CHILD_TASK=long task"]
   });
   assert.deepEqual(args, [
     "--id-format",
@@ -47,11 +67,45 @@ test("builds a non-focused cmux workspace launch", () => {
     "Pi · implement-cache",
     "--cwd",
     "/Users/ella.taira/Desktop/datadog-agent",
-    "--command",
-    "pi --session-id 'child-123'",
+    "--env",
+    "PI_CMUX_CHILD_TASK=long task",
     "--focus",
     "false"
   ]);
+  assert.equal(args.includes("--command"), false);
+});
+
+test("uses a bounded shell-ready probe that cannot contain task text", () => {
+  const command = buildShellReadyCommand("/tmp/pi launch/child.shell-ready");
+  assert.equal(command, ": > '/tmp/pi launch/child.shell-ready'");
+  assert.ok(Buffer.byteLength(command) < 128);
+});
+
+test("startup handshake waits until the marker exists", async () => {
+  let checks = 0;
+  let sleeps = 0;
+  await waitForPath("/tmp/child.started", {
+    exists: async () => ++checks === 3,
+    timeoutMs: 1000,
+    intervalMs: 1,
+    sleep: async () => {
+      sleeps += 1;
+    }
+  });
+  assert.equal(checks, 3);
+  assert.equal(sleeps, 2);
+});
+
+test("startup handshake rejects a missing marker", async () => {
+  await assert.rejects(
+    waitForPath("/tmp/child.started", {
+      exists: async () => false,
+      timeoutMs: 0,
+      intervalMs: 0,
+      sleep: async () => {}
+    }),
+    /Timed out waiting for child startup marker/
+  );
 });
 
 test("policy distinguishes lightweight fanout from navigable implementation sessions", () => {
@@ -134,4 +188,7 @@ test("supervisor exposes one agents command instead of implementation-detail ali
   );
   assert.match(source, /registerCommand\("agents"/);
   assert.doesNotMatch(source, /registerCommand\("(?:child|cmux-children|worktrees|worktree)"/);
+  assert.match(source, /PI_CMUX_CHILD_STARTED_PATH/);
+  assert.match(source, /session_start/);
+  assert.match(source, /waitForPath/);
 });

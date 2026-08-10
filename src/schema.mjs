@@ -88,6 +88,17 @@ export function isArtifactReference(value) {
   );
 }
 
+export function sanitizeArtifactReferences(values) {
+  const candidates = Array.isArray(values) ? values.slice(0, 12) : [];
+  const artifacts = candidates
+    .filter(isArtifactReference)
+    .map((value) => value.trim());
+  return {
+    artifacts,
+    discardedArtifactCount: candidates.length - artifacts.length
+  };
+}
+
 function summaryChars(summary) {
   return JSON.stringify(summary ?? {}).length;
 }

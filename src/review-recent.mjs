@@ -18,6 +18,18 @@ const DEFAULT_MAX_TOTAL_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_DIFF_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 100;
 
+function isInternalReviewPath(relative) {
+  const segments = path.normalize(relative).split(path.sep);
+  return (
+    segments[0] === ".git" ||
+    segments[0] === ".next" ||
+    segments[0] === ".pi-subagents" ||
+    segments.includes("node_modules") ||
+    (segments[0] === ".agents" && segments[1] === "runtime") ||
+    (segments[0] === ".claude" && segments[1] === "worktrees")
+  );
+}
+
 function limits(options = {}) {
   return {
     maxFileBytes: Math.max(1, options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES),
@@ -43,7 +55,11 @@ function listedPaths(output) {
     .filter((entry) => {
       if (path.isAbsolute(entry)) return false;
       const normalized = path.normalize(entry);
-      return normalized !== ".." && !normalized.startsWith(`..${path.sep}`);
+      return (
+        normalized !== ".." &&
+        !normalized.startsWith(`..${path.sep}`) &&
+        !isInternalReviewPath(normalized)
+      );
     });
 }
 
@@ -182,7 +198,11 @@ export async function captureRecentPath(baseline, filePath) {
     return path.join(parent, path.basename(requested));
   });
   const relative = relativePath(baseline.root, absolute);
-  if (!relative || baseline.directBefore.has(relative)) return false;
+  if (
+    !relative ||
+    isInternalReviewPath(relative) ||
+    baseline.directBefore.has(relative)
+  ) return false;
 
   const state = {
     bytes: [...baseline.directBefore.values()].reduce(

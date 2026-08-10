@@ -12,6 +12,7 @@ import {
 import { AgentJournal } from "../src/journal.mjs";
 import { importFreshSourceModule } from "../src/fresh-module.mjs";
 import {
+	distillationCatchupPlan,
 	distillationTarget,
 	maintenanceDefaults,
 	previousLocalDate,
@@ -53,6 +54,10 @@ function roots() {
 }
 
 export default async function agentJournalExtension(pi: ExtensionAPI) {
+	const schemaPath = fileURLToPath(
+		new URL("../src/schema.mjs", import.meta.url),
+	);
+	const { sanitizeArtifactReferences } = await importFreshSourceModule(schemaPath);
 	const policyPath = fileURLToPath(
 		new URL("../src/pi-memory-policy.mjs", import.meta.url),
 	);
@@ -63,18 +68,19 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 		autoCheckpointRetryMessage,
 		assistantRunFailed,
 		checkpointCadenceFromEntries,
+		classifyCheckpointTurn,
 		checkpointSourceEntries,
 		createRunState,
 		dailyDistillationMessage,
 		driveIntegrityMessage,
 		driveWorkspaceFallback,
 		formatRecallContext,
-		isCheckpointPrompt,
 		isDistillationPrompt,
 		isDriveIntegrityPrompt,
 		isDurableCheckpointRun,
 		recordToolCompletion,
 		recordToolStart,
+		recallUsageMetric,
 		shouldCheckpointBeforeCompaction,
 		shouldProactivelyRecall,
 		shouldSearchDriveWorkspace,
@@ -197,11 +203,15 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 		const entries = checkpointSourceEntries(ctx.sessionManager.getBranch());
 		if (!entries.some((entry) => entry.type === "message")) return undefined;
 		const meta = await metadata(ctx);
+		const artifactResult = sanitizeArtifactReferences(summary.artifacts);
 		const value = checkpointFromPiEntries(entries, {
 			...meta,
 			checkpointKind,
 			checkpointId,
-			summary,
+			summary: {
+				...summary,
+				artifacts: artifactResult.artifacts,
+			},
 			status: checkpointKind,
 		});
 		const result = await journal.ingest(value);
@@ -209,7 +219,10 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 			"agent-journal",
 			result.status === "appended" ? "journal:saved" : "journal:current",
 		);
-		return result;
+		return {
+			...result,
+			discardedArtifactCount: artifactResult.discardedArtifactCount,
+		};
 	}
 
 	async function refreshDistillationDue(now = new Date()) {
@@ -224,9 +237,26 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 
 	async function queueDistillation(ctx: ExtensionContext) {
 		if (!ctx.hasUI || !distillationDue) return;
-		const date = distillationDue;
+		const initialDate = distillationDue;
 		distillationDue = undefined;
-		if (!(await journal.claimDistillation(date))) return;
+		if (!(await journal.claimDistillation(initialDate))) return;
+		const plan = await distillationCatchupPlan(
+			initialDate,
+			previousLocalDate(),
+			(date) => journal.distillationCandidates(date),
+		);
+		if (plan.emptyThrough) {
+			await journal.markDistillationCompleted(plan.emptyThrough, []);
+		}
+		if (!plan.reviewDate) {
+			ctx.ui.notify(
+				`Daily memory review caught up through ${plan.emptyThrough}; no promotion candidates.`,
+				"info",
+			);
+			return;
+		}
+		const date = plan.reviewDate;
+		if (date !== initialDate && !(await journal.claimDistillation(date))) return;
 		pi.events.emit("action-inbox:upsert", {
 			id: `distillation:${date}`,
 			state: "approval",
@@ -778,8 +808,11 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const automaticCheckpoint = autoCheckpointPending;
-		const checkpointRun = automaticCheckpoint || isCheckpointPrompt(event.prompt);
+		const checkpointTurn = classifyCheckpointTurn(
+			event.prompt,
+			autoCheckpointPending,
+		);
+		const { automaticCheckpoint, checkpointRun } = checkpointTurn;
 		const distillationRun = isDistillationPrompt(event.prompt);
 		const maintenanceRun = isDriveIntegrityPrompt(event.prompt);
 		memoryOperation =
@@ -798,7 +831,9 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 			maintenanceRun,
 			automaticCheckpoint,
 		});
-		autoCheckpointPending = false;
+		if (checkpointTurn.consumePendingAutomaticCheckpoint) {
+			autoCheckpointPending = false;
+		}
 		if (!checkpointRun && !distillationRun && ctx.hasUI) {
 			try {
 				await refreshDistillationDue();
@@ -818,8 +853,12 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 						limit: automaticRecallDefaults.limit,
 						tokenBudget: automaticRecallDefaults.tokenBudget,
 					});
-				recallResult = result;
-				recalled = formatRecallContext(result);
+					recallResult = result;
+					recalled = formatRecallContext(result);
+					pi.appendEntry(
+						"agent-journal-recall-metrics",
+						recallUsageMetric(result, { repository }),
+					);
 			} catch {
 				// Recall is an optimization. A missing/corrupt index must never block the task.
 			}

@@ -32,7 +32,8 @@ import {
 import {
   buildGitDiffArgs,
   gitDiffReviewFilename,
-  recentTurnDiffFilename
+  recentTurnDiffFilename,
+  resolveGitReviewCwd
 } from "../src/review-git-diff.mjs";
 import {
   buildFileReviewChoices,
@@ -109,7 +110,29 @@ test("review exposes one command surface and removes legacy aliases", async () =
     "utf8"
   );
   assert.match(source, /registerCommand\("review"/);
+  assert.match(source, /registerTool\(\{[\s\S]*name: "review_open"/);
   assert.doesNotMatch(source, /registerCommand\("review-(?:recent|last|diff)"/);
+});
+
+test("exact commit ranges remain exact instead of becoming base comparisons", () => {
+  const range = "a5d98895504b95691d4922473b85e5b9a641dd14^..a5d98895504b95691d4922473b85e5b9a641dd14";
+  assert.deepEqual(buildGitDiffArgs(range), [
+    "diff",
+    "--no-ext-diff",
+    range,
+    "--"
+  ]);
+});
+
+test("programmatic Git review can target a repository outside the session cwd", () => {
+  assert.equal(
+    resolveGitReviewCwd("/workspace/datadog-agent", "../pharmacy-replicaepoch-store"),
+    "/workspace/pharmacy-replicaepoch-store"
+  );
+  assert.equal(
+    resolveGitReviewCwd("/workspace/datadog-agent", ""),
+    "/workspace/datadog-agent"
+  );
 });
 
 test("review persists and restores Pi-edited file suggestions across reloads", async () => {
@@ -649,6 +672,28 @@ test("review session routing prefers the exact cmux workspace then the longest c
     }),
     sessions[1]
   );
+});
+
+test("one review URL navigates across a bounded file set", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-set-"));
+  const firstPath = path.join(root, "values.yaml");
+  const secondPath = path.join(root, "plan.md");
+  const commentsPath = path.join(root, "comments.json");
+  await writeFile(firstPath, "enabled: true\n", "utf8");
+  await writeFile(secondPath, "# Plan\n", "utf8");
+  const service = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath,
+    onAppendDraft: async () => {}
+  });
+  t.after(() => service.close());
+
+  const opened = await service.openFiles([firstPath, secondPath]);
+  assert.equal(opened.count, 2);
+  const html = await (await fetch(opened.url)).text();
+  assert.match(html, /class="review-tabs"/);
+  assert.match(html, />values\.yaml<\/a>/);
+  assert.match(html, />plan\.md<\/a>/);
 });
 
 test("loopback review service saves markdown atomically and keeps draft text transient", async (t) => {

@@ -16,8 +16,10 @@
     "bootstrap": "node scripts/bootstrap.mjs",
     "build:pet": "./scripts/build-pet-app.sh",
     "canary:memory": "node bin/memory-canary.mjs",
+    "audit:pi": "node bin/pi-health-audit.mjs",
     "install:daily-review": "./scripts/install-daily-review-reminder.sh",
     "install:pi-copy-picker": "node scripts/install-pi-copy-picker.mjs",
+    "install:pi-prompt-echo": "node scripts/install-pi-prompt-echo.mjs",
     "migrate:memory": "node bin/migrate-memory.mjs --apply",
     "test": "node --test tests/*.test.mjs",
     "test:e2e-review": "node scripts/test-review-comments-e2e.mjs"
@@ -26,6 +28,7 @@
     "extensions": [
       "./extensions/pi-agent-journal.ts",
       "./extensions/pi-cmux-supervisor.ts",
+      "./extensions/pi-pair-terminal.ts",
       "./extensions/pi-lifecycle-pet.ts",
       "./extensions/pi-action-inbox.ts",
       "./extensions/pi-project-profiles.ts",

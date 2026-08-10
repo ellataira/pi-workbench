@@ -125,3 +125,25 @@ test("recent review remains bounded when a changed file is too large", async () 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("recent review ignores internal subagent artifacts before applying limits", async () => {
+  const root = await createRepository();
+  try {
+    const artifactRoot = path.join(root, ".pi-subagents", "artifacts");
+    await mkdir(artifactRoot, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 120 }, (_, index) =>
+        writeFile(path.join(artifactRoot, `${index}.json`), "internal\n", "utf8")
+      )
+    );
+    const baseline = await beginRecentTurn(root, { maxFiles: 10 });
+    await writeFile(path.join(root, "tracked.md"), "review this\n", "utf8");
+    const result = await finishRecentTurn(baseline);
+
+    assert.deepEqual(result.changedPaths, ["tracked.md"]);
+    assert.deepEqual(result.skippedPaths, []);
+    assert.match(result.diff, /\+review this/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

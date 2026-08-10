@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+export function resolveGitReviewCwd(sessionCwd, requestedCwd = "") {
+  return path.resolve(sessionCwd, String(requestedCwd).trim() || ".");
+}
+
 export function buildGitDiffArgs(requested = "") {
   const mode = String(requested).trim();
   if (!mode || mode === "unstaged") {
@@ -11,11 +15,16 @@ export function buildGitDiffArgs(requested = "") {
   }
   if (
     mode.startsWith("-") ||
-    !/^[A-Za-z0-9][A-Za-z0-9._/@-]*$/.test(mode)
+    !/^[A-Za-z0-9][A-Za-z0-9._/@^~+-]*$/.test(mode)
   ) {
     throw new Error("Invalid diff base");
   }
-  return ["diff", "--no-ext-diff", `${mode}...HEAD`, "--"];
+  return [
+    "diff",
+    "--no-ext-diff",
+    mode.includes("..") ? mode : `${mode}...HEAD`,
+    "--"
+  ];
 }
 
 export function gitDiffReviewFilename(cwd, gitArgs) {
