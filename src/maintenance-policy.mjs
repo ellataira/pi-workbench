@@ -27,6 +27,25 @@ function nextDate(dateKey) {
     .slice(0, 10);
 }
 
+export async function distillationCatchupPlan(
+  startDate,
+  latestDate,
+  candidatesForDate,
+  { maxDays = 31 } = {}
+) {
+  let date = startDate;
+  let emptyThrough;
+  for (let count = 0; count < maxDays && date <= latestDate; count += 1) {
+    const candidates = await candidatesForDate(date);
+    if (candidates.length) {
+      return { emptyThrough, reviewDate: date, candidates };
+    }
+    emptyThrough = date;
+    date = nextDate(date);
+  }
+  return { emptyThrough, reviewDate: undefined, candidates: [] };
+}
+
 export function previousLocalDate(
   now = new Date(),
   timeZone = DEFAULT_TIME_ZONE

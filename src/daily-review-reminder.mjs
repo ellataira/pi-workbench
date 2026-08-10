@@ -15,3 +15,22 @@ export function dailyReviewReminder(now = new Date(), state = {}) {
     updatedAt: now.toISOString()
   };
 }
+
+export async function sendDailyReviewNotification(
+  reminder,
+  execute,
+  platform = process.platform
+) {
+  if (platform !== "darwin") return false;
+  try {
+    await execute("/usr/bin/osascript", [
+      "-e",
+      `display notification "Open Pi and run /distill ${reminder.id.slice(
+        "distillation:".length
+      )}" with title "Daily Pi memory review"`
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}

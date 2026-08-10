@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeCheckpoint, validateCheckpoint } from "../src/schema.mjs";
+import {
+  normalizeCheckpoint,
+  sanitizeArtifactReferences,
+  validateCheckpoint
+} from "../src/schema.mjs";
 import { checkpoint } from "./fixtures.mjs";
 
 test("accepts a valid vendor-neutral checkpoint", () => {
@@ -112,6 +116,43 @@ test("artifacts must be references rather than prose copied from a conversation"
     );
     assert.equal(result.ok, true, artifact);
   }
+});
+
+test("checkpoint boundary drops prose artifacts without weakening validation", () => {
+  const sanitized = sanitizeArtifactReferences([
+    "/Users/ella/Desktop/example-repo/docs/plan.md",
+    "The plan is up to date and the smoke test still needs to run.",
+    "https://example.test/design",
+    "another explanatory sentence that is not an artifact reference"
+  ]);
+
+  assert.deepEqual(sanitized, {
+    artifacts: [
+      "/Users/ella/Desktop/example-repo/docs/plan.md",
+      "https://example.test/design"
+    ],
+    discardedArtifactCount: 2
+  });
+  assert.equal(
+    validateCheckpoint(
+      checkpoint({
+        summary: {
+          ...checkpoint().summary,
+          artifacts: sanitized.artifacts
+        }
+      })
+    ).ok,
+    true
+  );
+});
+
+test("checkpoint boundary converts a prose-only artifact list to an empty list", () => {
+  assert.deepEqual(
+    sanitizeArtifactReferences([
+      "No files changed because this turn only answered a status question."
+    ]),
+    { artifacts: [], discardedArtifactCount: 1 }
+  );
 });
 
 test("supports substantial children but keeps lightweight children inline", () => {

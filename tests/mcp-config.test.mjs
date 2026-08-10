@@ -73,3 +73,12 @@ test("Google Drive uses the Datadog Workspace MCP endpoint lazily", async () => 
     lifecycle: "lazy"
   });
 });
+
+test("Trajectory MCP uses the installed user-level binary", async () => {
+  const config = await loadConfig();
+  assert.deepEqual(config.mcpServers.trajectory, {
+    command: "__HOME__/.trajectory/bin/trajectory",
+    args: ["mcp"],
+    lifecycle: "eager"
+  });
+});

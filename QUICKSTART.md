@@ -16,6 +16,7 @@ npm ci
 npm test
 npm run bootstrap -- --replace-existing
 npm run install:pi-copy-picker
+npm run install:pi-prompt-echo
 npm run install:daily-review
 ```
 
@@ -184,6 +185,15 @@ always-on-top Paddington companion controlled by `/pet [on|off|status]`.
 | Run shell without sending output to the model | `!!command` |
 | Copy the last response | `Ctrl+X` |
 
+Pressing `Enter` immediately renders the submitted prompt in the chronological
+conversation stream, including steering and follow-up input while Pi is busy.
+Pi performs authentication, compaction checks, extension setup, or queueing
+underneath it. The later canonical message event is reconciled with that echo,
+so the prompt appears only once.
+Re-run `npm run install:pi-prompt-echo` after upgrading Pi; the guarded patch
+fails closed if Pi's native submit path has changed. Restart Pi after installing
+it; `/reload` cannot replace the already-loaded native UI class.
+
 Native model-callable tools:
 
 | Tool | Purpose |
@@ -213,6 +223,21 @@ pi --no-tools
 | `Alt+Enter` | Queue a follow-up after all current work |
 | `Escape` | Abort and restore queued text |
 | `Alt+Up` | Bring a queued message back into the editor |
+
+### Visible pair-programming terminal
+
+Run `/pair start`, or ask Pi to “pair with me in a visible terminal.” Pi creates
+a terminal split to the right and proposes exactly one command. You run that
+command yourself. Once its output settles, Pi reads only the bounded new screen
+delta, explains the result, and proposes one next command automatically.
+
+Pi never sends keys or executes through the paired terminal. `/pair status`
+shows the attached surface; `/pair stop` stops observation but leaves the shell
+open. Output is control-character stripped, best-effort secret-redacted, capped
+at 120 lines and 12,000 characters, and treated as untrusted data. The observed
+delta exists only in the native resumable Pi session; it is never copied into
+Obsidian memory or promotion candidates. Avoid printing secrets because no
+redactor can recognize every credential format.
 
 ### Models and thinking
 
@@ -312,9 +337,15 @@ From a parent Pi session inside a Git repository:
 The supervisor:
 
 1. creates an isolated Git worktree;
-2. starts a persistent Pi-native child in a new cmux workspace;
-3. records only the owned workspace and session metadata; and
-4. leaves the new workspace unfocused so the parent can keep working.
+2. creates the cmux workspace and waits for its login shell to execute a readiness probe;
+3. starts Pi with the task passed outside terminal input and waits for the child session handshake;
+4. records only the owned workspace and session metadata; and
+5. leaves the new workspace unfocused so the parent can keep working.
+
+Long tasks are never pasted into the shell. A launch is registered only after
+the child Pi extension reports `session_start`; failed or timed-out launches
+close their workspace and remove the newly created worktree instead of leaving
+an apparently active child behind.
 
 Use cmux's sidebar or tabs to enter the child. It is a normal Pi session: chat
 with it, steer it, use `/tree`, and resume it later.
@@ -433,7 +464,10 @@ The contract rejects:
 - transcripts or role-labelled dialogue; and
 - tool arguments or copied conversation text.
 
-Prose is not accepted in the artifact list, and child sessions use generic
+Pi discards and counts non-reference artifact entries before ingestion, while
+retaining valid paths, URLs, and stable IDs from the same checkpoint. The
+underlying storage validator still rejects artifact prose, so this recovery
+behavior does not weaken the no-transcript boundary. Child sessions use generic
 stored link labels rather than copying delegated task text. Promoted memories
 carry the same representation marker and reject transcript-shaped dialogue.
 Journal Markdown and SQLite state are owner-only on disk.
@@ -508,9 +542,10 @@ identities, and preserves compliant compressed checkpoint sections.
 ### Daily promotion review
 
 At 09:00 America/New_York, launchd adds a daily-review item to Paddington and
-shows a macOS notification. The next interactive Pi turn starts one review of
-the next unreviewed calendar day, normally the previous day. Missed days catch
-up one per day. Pi retrieves only compressed
+shows a macOS notification. The next interactive Pi turn scans from the next
+unreviewed date through yesterday. Consecutive dates without candidates are
+completed together in one bounded local pass; Pi stops at the first date that
+needs your decision. Pi retrieves only compressed
 session candidates, shows their scope, topics, and provenance, then asks which
 ones to promote, edit, skip, or snooze. Promotion always requires an explicit
 user choice.
@@ -530,6 +565,24 @@ Reinstall the exact-time reminder after moving this package:
 ```bash
 ~/.agents/extensions/agent-journal/scripts/install-daily-review-reminder.sh
 ```
+
+### Monthly Pi health audit
+
+Run a privacy-safe 30-day audit with:
+
+```bash
+cd ~/.agents/extensions/agent-journal
+npm run audit:pi -- --days 30 --write
+npm test
+npm run canary:memory
+```
+
+The persisted report contains aggregate session, model, token, cost, tool,
+checkpoint, compaction, retrieval, index, retention, and reminder metadata. It
+never stores prompts, responses, queries, recalled content, or tool arguments.
+New automatic recalls append only result counts to the native Pi session so the
+monthly report can measure hit and cold-rehydration rates without retaining the
+query. Reports live under `agent-journal/audits/YYYY/MM/`.
 
 ### Local retention
 
@@ -712,6 +765,8 @@ Authentication differs by transport:
 | `journal_audit_retention_receipts` | Reports malformed and duplicate receipts without changing them | `/memory receipts` |
 | `code-review` skill | Performs a focused, read-only review for concrete defects | Ask “review this code” or use `$code-review` |
 | `review-changes` skill | Performs a heavyweight repository-agnostic review with complete file coverage | `/review-changes`, “deep review,” or `$review-changes` |
+| `review_open` | Opens a file set, an exact Git range, or the last-turn diff in the review UI | Ask Pi to review the targets; no slash command needed |
+| `pair_terminal` | Starts, inspects, or stops a user-controlled visible terminal split | `/pair start`, or ask Pi to pair with you |
 | `journal_distillation_candidates` | Reads one day's compressed promotion candidates | Automatic or `/distill [date]` |
 | `journal_promote` | Writes one explicitly approved global or project memory | Daily review |
 | `journal_distillation_complete` | Records that every daily candidate was handled | Daily review |
@@ -764,7 +819,14 @@ Running `/review` with no argument opens a contextual chooser:
 - **Git diff · Compare with a base…** asks for a base such as `origin/main`.
 
 `/review <path>` bypasses the quiz and opens that file directly. Direct Git
-forms are `/review git`, `/review git staged`, and `/review git <base>`.
+forms are `/review git`, `/review git staged`, `/review git <base>`, and exact
+ranges such as `/review git <commit>^..<commit>`.
+
+When you ask Pi to review one or more files or a Git diff, the model-callable
+`review_open` tool opens this surface directly; Pi should not hand you paths and
+ask you to type `/review`. A set of up to eight files opens in one pane with
+tabs across the top. Its Git mode accepts a repository directory independently
+of the active Pi workspace, which makes cross-repository commit review direct.
 
 The review command opens a loopback-only browser pane in rendered-preview mode. Select
 text in the rendered document and choose the nearby **Comment** action. A
@@ -864,7 +926,9 @@ Inside the chooser, **Open a complete file** offers those files directly. The
 next turn replaces the widget. If it makes no changes, Pi clears the prior
 diff so the last-turn choice never points to an older turn. Turn snapshots are bounded to
 100 files, 1 MiB per file, and 5 MiB total; oversized or unsupported files are
-reported and omitted. Ignored Git files are not scanned unless Pi directly
+reported and omitted. Internal `.pi-subagents` artifacts, nested Claude
+worktrees, runtime state, build output, and dependencies are filtered before
+those limits are applied. Ignored Git files are not scanned unless Pi directly
 touches them.
 
 The Git choices create a temporary review file from the unstaged diff, the
@@ -1062,6 +1126,7 @@ In addition to the commands described above:
 | `/reload` | Reload extensions, skills, prompts, and themes |
 | `/workspace [path|back|show]` | Choose, show, or switch the active Git repository while preserving the conversation |
 | `/review [path|git [staged|base]]` | Choose a contextual review view or open a file/Git diff directly |
+| `/pair [start|status|stop]` | Pair through a neighboring terminal where you run every command |
 | `/agents [persistent|background|list|focus|recover|patch|cleanup]` | Guide or directly manage background and persistent agents |
 | `/memory [status|checkpoint|distill|audit|cleanup|integrity|receipts]` | Guide or directly manage memory and retention |
 | `/hotkeys` | Show keybindings |
@@ -1175,6 +1240,10 @@ coordination, or a separate workstream.
 
 The automatic checkpoint backstop runs once for the first durable change in a
 session. It also runs before compaction when newer unsaved durable work exists.
+On success it prints `Memory checkpoint saved.` so the turn never appears to
+finish without a response. If you submit another prompt while that checkpoint
+is queued, Pi handles your prompt normally and saves the checkpoint in its own
+marked follow-up turn.
 If Pi warns that it could
 not save the checkpoint, run `/checkpoint` manually. Later, use
 `/resume` for the native session or ask `agent-memory` to recall the compressed
@@ -1196,7 +1265,7 @@ durable record.
 | Google Drive needs authentication | `/mcp reconnect google-workspace`; approve in the browser and return to Pi |
 | Pi unexpectedly starts Slack OAuth | Remove same-name MCP config imports, `/reload`, then `/mcp reconnect slack` |
 | Context behavior looks wrong | `/ctx-stats`, then `/ctx-doctor` |
-| Automatic checkpoint was not saved | Run `/checkpoint`; copied conversation text is rejected and must be paraphrased |
+| Automatic checkpoint was not saved | Run `/checkpoint`; copied conversation text is rejected and must be paraphrased. Artifact prose is discarded automatically and should not cause this warning |
 | Recalled memory looks irrelevant | Ask for the prior decision explicitly; automatic recall runs only for continuity/context queries and is capped at roughly 400 tokens |
 | Daily promotion review did not appear | Check `launchctl print gui/$(id -u)/com.ellataira.pi-daily-memory-review`, then use `/distill` |
 | Topic edits are missing from recall | Run `~/.agents/skills/agent-memory/scripts/agent-memory reindex` |

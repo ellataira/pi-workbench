@@ -773,6 +773,7 @@ main{max-width:1240px;margin:18px auto;padding:0 18px}.comment-box{width:100%;mi
 #selection-action{position:fixed;z-index:18;padding:6px 10px;border:0;border-radius:999px;background:var(--accent);color:white;box-shadow:0 6px 20px rgb(0 0 0/.22);font-weight:650}
 #diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:1px solid var(--annotation-border);border-radius:8px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
 .status{color:var(--muted);font-size:12px}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
+.review-tabs{display:flex;gap:6px;overflow:auto;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--card)}.review-tabs a{flex:0 0 auto;padding:4px 9px;border:1px solid var(--border);border-radius:999px;color:var(--text);text-decoration:none;font-size:12px}.review-tabs a.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--card));color:var(--accent);font-weight:650}
 @media(max-width:760px){header{flex-wrap:wrap}header strong{max-width:100%;flex:1 0 70%}main{padding:0 10px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
 </style>
 </head>
@@ -791,6 +792,7 @@ main{max-width:1240px;margin:18px auto;padding:0 18px}.comment-box{width:100%;mi
   <button id="save" class="${state.kind === "markdown" ? "" : "hidden"}">Save</button>
   <button id="send" class="primary">Add to Pi</button>
 </header>
+${state.navigation?.length > 1 ? `<nav class="review-tabs" aria-label="Review files">${state.navigation.map((item) => `<a href="${escapeHtml(item.url)}" class="${item.current ? "active" : ""}">${escapeHtml(item.label)}</a>`).join("")}</nav>` : ""}
 <main>
   <textarea id="comment" class="comment-box hidden" placeholder="Optional review comment"></textarea>
   <details id="annotations" class="${state.kind === "markdown" ? "" : "hidden"}" ${state.annotations?.length ? "open" : ""}>
@@ -1260,8 +1262,30 @@ export async function createReviewServer({
     });
     return {
       capability,
-      url: `${baseUrl}/review/${capability}`
+      url: `${baseUrl}/review/${capability}`,
+      sourcePath: resolved.path
     };
+  }
+
+  async function openFiles(filePaths) {
+    const unique = [...new Set(filePaths.map((filePath) => path.resolve(filePath)))].slice(0, 8);
+    if (!unique.length) throw new Error("Review set requires at least one file");
+    const opened = [];
+    for (const filePath of unique) opened.push(await openFile(filePath));
+    const navigation = opened.map((entry) => ({
+      capability: entry.capability,
+      label: path.basename(entry.sourcePath),
+      url: entry.url
+    }));
+    for (const entry of opened) {
+      const state = capabilities.get(entry.capability);
+      state.navigation = navigation.map((item) => ({
+        label: item.label,
+        url: item.url,
+        current: item.capability === entry.capability
+      }));
+    }
+    return { ...opened[0], count: opened.length };
   }
 
   const server = createServer(async (request, response) => {
@@ -1565,6 +1589,7 @@ export async function createReviewServer({
       secret: recoverySecret
     },
     openFile,
+    openFiles,
     close: () => new Promise((resolve) => {
       capabilities.clear();
       server.close(() => resolve());

@@ -8,7 +8,10 @@ import { promisify } from "node:util";
 
 import { upsertInboxItem } from "../src/action-inbox.mjs";
 import { mutateInboxFile } from "../src/action-inbox-store.mjs";
-import { dailyReviewReminder } from "../src/daily-review-reminder.mjs";
+import {
+  dailyReviewReminder,
+  sendDailyReviewNotification
+} from "../src/daily-review-reminder.mjs";
 
 const execute = promisify(execFile);
 const stateRoot =
@@ -35,14 +38,7 @@ if (!reminder) {
 await mutateInboxFile(inboxPath, (current) =>
   upsertInboxItem(current, reminder)
 );
-if (process.platform === "darwin") {
-  await execute("/usr/bin/osascript", [
-    "-e",
-    `display notification "Open Pi and run /distill ${reminder.id.slice(
-      "distillation:".length
-    )}" with title "Daily Pi memory review"`
-  ]);
-}
+const notified = await sendDailyReviewNotification(reminder, execute);
 process.stdout.write(
-  `${JSON.stringify({ due: true, id: reminder.id, notified: process.platform === "darwin" })}\n`
+  `${JSON.stringify({ due: true, id: reminder.id, notified })}\n`
 );

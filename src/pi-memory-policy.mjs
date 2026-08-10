@@ -7,6 +7,17 @@ export const automaticRecallDefaults = Object.freeze({
   tokenBudget: 400
 });
 
+export function recallUsageMetric(result, options = {}) {
+  const items = Array.isArray(result?.items) ? result.items : [];
+  return {
+    recordedAt: String(options.recordedAt ?? new Date().toISOString()),
+    repository: String(options.repository ?? "").slice(0, 240),
+    resultCount: items.length,
+    coldResultCount: items.filter((item) => item?.rehydration).length,
+    tokenBudget: automaticRecallDefaults.tokenBudget
+  };
+}
+
 const TRIVIAL_PROMPT =
   /^(?:hi|hello|hey|yo|thanks|thank you|ok|okay|cool|great|test|ping|you there|wyd)[!?.\s]*$/i;
 const CHECKPOINT_PROMPT =
@@ -31,6 +42,8 @@ const READ_ONLY_TOOLS = new Set([
   "find",
   "glob",
   "ls",
+  "pair_terminal",
+  "review_open",
   "view_image",
   "web_search"
 ]);
@@ -38,6 +51,16 @@ const KNOWN_WRITE_TOOLS = new Set(["edit", "write", "apply_patch"]);
 
 export function isCheckpointPrompt(prompt) {
   return CHECKPOINT_PROMPT.test(String(prompt ?? ""));
+}
+
+export function classifyCheckpointTurn(prompt, automaticCheckpointPending) {
+  const checkpointRun = isCheckpointPrompt(prompt);
+  const automaticCheckpoint = checkpointRun && automaticCheckpointPending === true;
+  return {
+    checkpointRun,
+    automaticCheckpoint,
+    consumePendingAutomaticCheckpoint: automaticCheckpoint
+  };
 }
 
 export function isDistillationPrompt(prompt) {
@@ -253,7 +276,7 @@ export function autoCheckpointMessage() {
     "Save the completed work as one compressed durable checkpoint.",
     "Call journal_checkpoint exactly once with only the semantic goal, outcomes, decisions, next steps, artifact paths, and stable tags.",
     "Do not quote or reproduce any prompt, response, message, tool argument, or transcript excerpt.",
-    "After the tool succeeds, reply with no additional narrative."
+    "After the tool succeeds, reply with exactly: Memory checkpoint saved."
   ].join("\n");
 }
 
@@ -263,7 +286,7 @@ export function autoCheckpointRetryMessage() {
     "Retry the failed automatic checkpoint once using more abstract language.",
     "Call journal_checkpoint exactly once. Use category-level paraphrases for the goal, outcomes, decisions, and next steps; keep only stable artifact paths and tags.",
     "Do not reuse any sentence or phrase from the conversation, prompt, response, message, or tool argument.",
-    "After the tool succeeds, reply with no additional narrative."
+    "After the tool succeeds, reply with exactly: Memory checkpoint saved."
   ].join("\n");
 }
 

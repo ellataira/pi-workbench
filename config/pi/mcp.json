@@ -20,7 +20,7 @@
       "lifecycle": "lazy"
     },
     "trajectory": {
-      "command": "__HOME__/.pi/agent/extensions/trajectory/bin/trajectory",
+      "command": "__HOME__/.trajectory/bin/trajectory",
       "args": ["mcp"],
       "lifecycle": "eager"
     }

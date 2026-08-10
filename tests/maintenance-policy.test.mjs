@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  distillationCatchupPlan,
   distillationTarget,
   isRetentionEligible,
   shouldRunCleanupAudit
@@ -48,12 +49,44 @@ test("daily distillation prompts once and remains complete once reviewed", () =>
   );
 });
 
-test("daily distillation catches up one missed day at a time", () => {
+test("daily distillation selects the oldest missed date as its scan start", () => {
   const target = distillationTarget(
     new Date("2026-07-27T14:00:00.000Z"),
     { completedThrough: "2026-07-23" }
   );
   assert.equal(target, "2026-07-24");
+});
+
+test("daily distillation coalesces consecutive empty catch-up dates", async () => {
+  const visited = [];
+  const plan = await distillationCatchupPlan(
+    "2026-08-08",
+    "2026-08-09",
+    async (date) => {
+      visited.push(date);
+      return [];
+    }
+  );
+  assert.deepEqual(visited, ["2026-08-08", "2026-08-09"]);
+  assert.deepEqual(plan, {
+    emptyThrough: "2026-08-09",
+    reviewDate: undefined,
+    candidates: []
+  });
+});
+
+test("daily distillation stops coalescing at the next date needing review", async () => {
+  const candidate = { identity: "pi:session" };
+  const plan = await distillationCatchupPlan(
+    "2026-08-08",
+    "2026-08-10",
+    async (date) => date === "2026-08-09" ? [candidate] : []
+  );
+  assert.deepEqual(plan, {
+    emptyThrough: "2026-08-08",
+    reviewDate: "2026-08-09",
+    candidates: [candidate]
+  });
 });
 
 test("native sessions become cleanup candidates after 30 days", () => {

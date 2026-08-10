@@ -8,6 +8,8 @@ New to the setup? Start with the complete [Pi + cmux quickstart](./QUICKSTART.md
 - explicit compressed session checkpoints in Obsidian;
 - bounded recall and explicit global/project memory promotion;
 - persistent Pi-native cmux child sessions in isolated Git worktrees;
+- a visible pair-programming terminal where the user runs each command and Pi
+  automatically analyzes bounded output;
 - an orchestration policy for lightweight fan-out versus implementing workers;
 - a loopback Markdown and diff review surface that can append to the Pi draft;
 - a draggable, always-on-top macOS pet driven by real Pi and subagent events.
@@ -28,6 +30,7 @@ npm ci
 npm test
 npm run bootstrap -- --replace-existing
 npm run install:pi-copy-picker
+npm run install:pi-prompt-echo
 npm run install:daily-review
 ```
 
@@ -79,13 +82,19 @@ Inside Pi:
   task, create an implementing agent, or manage an existing child.
 - `/agents persistent <task>` creates an isolated Git worktree and starts a persistent
   Pi-native child in a new, unfocused cmux workspace. Enter it whenever you
-  want to chat with or steer the child.
+  want to chat with or steer the child. The supervisor waits for the new shell
+  and a Pi `session_start` handshake before registering it, so long tasks are
+  not pasted into an unready terminal and failed launches are rolled back.
 - `/agents list` reports only owned workspaces and whether each child is active, orphaned, dirty, or
   merged. `/agents recover`, `/agents patch`, and `/agents cleanup`
   recover the session, produce a bounded reviewable patch, or remove only a
   clean merged child.
 - Ask the parent to focus, message, or interrupt a named child; it uses the
   `cmux_session` tool, which rejects unknown workspaces.
+- `/pair start` creates a terminal split to the right. Pi proposes one command,
+  you run it visibly, and Pi automatically analyzes the resulting screen delta
+  before proposing one next command. It never types into or executes through
+  the paired terminal. `/pair stop` detaches observation without closing it.
 - Use `/tree` inside a child and `/resume` or its session ID to return later.
 - `/subagents-fleet` shows background subagent work.
 - Use background scouts/reviewers for lightweight fan-out. Use workers or
@@ -132,12 +141,18 @@ Inside Pi:
   adapter status/connection/authentication actions, review-only turns, and
   clarification requests never flush pending work; remote MCP writes remain
   substantive. `/checkpoint` saves immediately; the model does
-  not independently classify completed work as a checkpoint milestone. A
-  rejected automatic checkpoint is retried once
+  not independently classify completed work as a checkpoint milestone. An
+  automatic checkpoint rejected for copied conversation text is retried once
   with stricter paraphrasing before `/checkpoint` becomes the manual retry path.
+  A successful automatic checkpoint ends with a visible `Memory checkpoint
+  saved.` confirmation rather than an empty assistant message. A queued
+  automatic checkpoint cannot consume an intervening user prompt.
 - The checkpoint may contain goals, outcomes, decisions, next steps, artifact
-  references, tags, and aggregate usage only. Artifact prose is rejected;
-  child-task labels are stored generically rather than copying delegated text.
+  references, tags, and aggregate usage only. At Pi's checkpoint boundary,
+  non-reference artifact entries are discarded and counted while valid paths,
+  URLs, and stable IDs continue to storage. The storage validator remains
+  strict and rejects artifact prose from any caller that bypasses that boundary.
+  Child-task labels are stored generically rather than copying delegated text.
 - Raw prompts, assistant responses, tool arguments, transcripts, role-labelled
   dialogue, and summary fields copied directly from conversation text are
   rejected and are never added to Obsidian or SQLite. Copy detection compares
@@ -160,9 +175,10 @@ Inside Pi:
 - `/diary` is a compatibility route; the old diary is frozen.
 - A launchd reminder runs at 09:00 America/New_York, adds the fixed
   `daily-distillation` action to Paddington's inbox, and displays a macOS
-  notification. The next interactive Pi turn queues one review of the next
-  unreviewed day, normally the previous day. Missed days catch up one per day.
-  Pi asks which candidates
+  notification. The next interactive Pi turn scans from the next unreviewed
+  day through yesterday. Consecutive dates with no candidates are completed in
+  one bounded local pass; Pi stops and asks only at the first date that has
+  promotion candidates. Pi asks which candidates
   to promote, edit, skip, or snooze. Nothing is promoted without the user's
   explicit choice. Use `/distill [YYYY-MM-DD]` to start manually.
 - `/memory` is the single guided entry point for status, checkpointing, daily
@@ -191,6 +207,10 @@ Inside Pi:
   after importing legacy journal Markdown; it sanitizes in place, creates no
   raw-content backup, replaces task-shaped legacy summaries with neutral
   metadata, merges duplicate identities, and rebuilds SQLite.
+- Run `npm run audit:pi -- --days 30 --write` monthly for aggregate Pi session,
+  model, token, cost, tool, checkpoint, compaction, retrieval, index, retention,
+  and reminder health. Reports contain no prompts, responses, queries, recalled
+  content, or tool arguments and live under `agent-journal/audits/YYYY/MM/`.
 - Invoke the shared `code-review` skill for a focused read-only review of the
   requested diff or current working tree.
 - Invoke the shared `review-changes` skill for a heavyweight read-only review
@@ -307,19 +327,27 @@ npm run build:pet
   and **Update & add another**, plus selections spanning rendered lines and
   wrapped inline-code identifiers, using native mouse selections in isolated
   headless Chrome.
+- `review_open` gives the agent the same surface programmatically. When you ask
+  to review files or a diff, Pi opens it directly instead of returning paths
+  and asking you to type `/review`. Up to eight files share one review window
+  with file tabs. Git review may name a different repository directory, so an
+  exact range can open without changing the active Pi workspace.
 - The **Changes from last Pi turn** choice opens one combined diff containing
   only changes made during
   the immediately preceding Pi turn. It compares the actual pre-turn worktree
   with the settled worktree, so earlier dirty changes are excluded unless the
   turn modifies them. Git-visible shell, formatter, commit, and subagent
   changes are included; bounded untracked files and directly touched non-Git
-  files are supported.
+  files are supported. Internal `.pi-subagents` artifacts, nested Claude
+  worktrees, runtime state, build output, and dependencies are filtered before
+  snapshot limits and never create skipped-file warnings.
 - After a changed turn, Pi shows **Review ready — run /review** and a compact
   list of the files included in that view. A no-change turn clears the previous
   diff instead of silently retaining stale work.
 - The Git choices open generated unstaged, staged, or base-comparison diffs
   with persistent line comments. Direct forms use `/review git`,
-  `/review git staged`, or `/review git <base>`.
+  `/review git staged`, `/review git <base>`, or an exact range such as
+  `/review git <commit>^..<commit>`.
   Double-clicking a supported file in cmux routes through the same surface when
   a live Pi session is available.
 - “Add comments to Pi” appends the complete staged Markdown review as one
