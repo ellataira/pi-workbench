@@ -625,6 +625,7 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 			}),
 		}),
 		async execute(_toolCallId, params) {
+			const rollups = await journal.dailyRollupsThrough(params.date);
 			const state = await journal.markDistillationCompleted(
 				params.date,
 				params.promotedMemoryIds,
@@ -634,7 +635,7 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 			});
 			return {
 				content: [{ type: "text", text: `Daily memory review completed through ${params.date}.` }],
-				details: state,
+				details: { state, rollups },
 			};
 		},
 	});

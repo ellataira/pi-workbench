@@ -18,8 +18,10 @@
     "canary:memory": "node bin/memory-canary.mjs",
     "audit:pi": "node bin/pi-health-audit.mjs",
     "install:daily-review": "./scripts/install-daily-review-reminder.sh",
+    "install:monthly-audit": "./scripts/install-monthly-health-audit.sh",
     "install:pi-copy-picker": "node scripts/install-pi-copy-picker.mjs",
     "install:pi-prompt-echo": "node scripts/install-pi-prompt-echo.mjs",
+    "install:pi-resume-clone": "node scripts/install-pi-resume-clone.mjs",
     "migrate:memory": "node bin/migrate-memory.mjs --apply",
     "test": "node --test tests/*.test.mjs",
     "test:e2e-review": "node scripts/test-review-comments-e2e.mjs"

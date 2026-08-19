@@ -60,13 +60,17 @@ async function main() {
       console.log(JSON.stringify(await journal.dailyRollup(args[0]), null, 2));
       break;
     }
+    case "rollup-through": {
+      console.log(JSON.stringify(await journal.dailyRollupsThrough(args[0]), null, 2));
+      break;
+    }
     case "reindex": {
       console.log(JSON.stringify(await journal.reindexTopics(), null, 2));
       break;
     }
     default:
       throw new Error(
-        "usage: agent-journal <ingest|recall|promote|rollup|reindex> [arguments]"
+        "usage: agent-journal <ingest|recall|promote|rollup|rollup-through|reindex> [arguments]"
       );
   }
 }

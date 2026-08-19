@@ -7,6 +7,7 @@ const allowedCodes = new Set([
   "authentication",
   "daily-distillation",
   "external-approval",
+  "health-audit",
   "subagent-complete",
   "subagent-failed",
   "tool-error"
@@ -18,6 +19,8 @@ const statePriority = {
   approval: 20,
   completed: 10
 };
+
+export const PET_INBOX_ATTENTION_MS = 15 * 60 * 1000;
 
 function identifier(value, field, maxLength = 160) {
   if (typeof value !== "string" || !value.trim()) {
@@ -88,11 +91,22 @@ export function inboxLabel(item) {
     authentication: "Authentication blocked",
     "daily-distillation": "Daily memory review",
     "external-approval": "Approval needed",
+    "health-audit": "Pi health audit",
     "subagent-complete": "Subagent completed",
     "subagent-failed": "Subagent failed",
     "tool-error": "Tool failed"
   };
   return labels[item?.code] ?? "Action needed";
+}
+
+export function inboxItemRequiresPetAttention(
+  item,
+  now = new Date(),
+  attentionMs = PET_INBOX_ATTENTION_MS
+) {
+  const updatedAt = Date.parse(item?.updatedAt ?? "");
+  if (!Number.isFinite(updatedAt)) return false;
+  return Math.max(0, now.getTime() - updatedAt) <= attentionMs;
 }
 
 function friendlyAge(updatedAt, now) {

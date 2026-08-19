@@ -19,6 +19,7 @@ import {
   validateCheckpoint,
   validateMemoryPromotion
 } from "./schema.mjs";
+import { latestDatedFilename, rollupDatesThrough } from "./pi-health-audit.mjs";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -1195,5 +1196,32 @@ export class AgentJournal {
     ].join("\n");
     await this.atomicWrite(notePath, text);
     return { notePath, count: rows.length };
+  }
+
+  async dailyRollupsThrough(date, { limit = 366 } = {}) {
+    await this.initialize();
+    const existing = [];
+    const pending = [this.dailyRoot];
+    while (pending.length) {
+      const directory = pending.pop();
+      for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+        const target = path.join(directory, entry.name);
+        if (entry.isDirectory()) pending.push(target);
+        else if (entry.isFile() && entry.name.endsWith(".md")) existing.push(target);
+      }
+    }
+    const firstIndexed = this.database
+      .prepare("SELECT MIN(substr(updated_at, 1, 10)) AS date FROM journal_documents")
+      .get()?.date;
+    const dates = rollupDatesThrough(latestDatedFilename(existing), date, {
+      limit,
+      firstDate: firstIndexed ?? date
+    });
+    const rollups = [];
+    for (const rollupDate of dates) rollups.push(await this.dailyRollup(rollupDate));
+    if (dates.length) {
+      await this.updateMaintenanceState({ lastDailyRollupThrough: dates.at(-1) });
+    }
+    return { through: dates.at(-1) ?? latestDatedFilename(existing), dates, rollups };
   }
 }

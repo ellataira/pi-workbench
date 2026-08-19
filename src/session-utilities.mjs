@@ -18,6 +18,31 @@ function compactLabel(value, limit = 96) {
   return `${normalized.slice(0, limit - 1).trimEnd()}…`;
 }
 
+function hasMultilineShellQuote(lines) {
+  let quote = "";
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+      if (quote === "'") {
+        if (character === "'") quote = "";
+        continue;
+      }
+      if (character === '"') {
+        quote = quote === '"' ? "" : '"';
+        continue;
+      }
+      if (!quote && character === "'") {
+        quote = "'";
+        continue;
+      }
+      if (character === "\\" && quote !== "'") index += 1;
+    }
+    if (quote && lineIndex < lines.length - 1) return true;
+  }
+  return false;
+}
+
 export function buildRewindChoices(entries, { limit = MAX_HISTORY_CHOICES } = {}) {
   if (!Array.isArray(entries) || limit <= 0) return [];
   return entries
@@ -47,10 +72,27 @@ export function latestAssistantText(entries) {
 }
 
 function shellBlockCommands(value) {
-  const lines = String(value ?? "")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\$\s?/, "").replace(/^\s*>\s?/, ""))
-    .filter((line) => line.trim());
+  let lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines.at(-1).trim()) lines.pop();
+  const indents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^\s*/)?.[0].length ?? 0);
+  const sharedIndent = indents.length ? Math.min(...indents) : 0;
+  lines = lines.map((line) => line.slice(Math.min(sharedIndent, line.length)));
+  const promptLines = lines.filter((line) => line.trim());
+  const allPrompted = promptLines.length > 0 && promptLines.every((line) => /^\s*[$>]\s?/.test(line));
+  if (allPrompted) {
+    lines = lines.map((line) => line.replace(/^\s*[$>]\s?/, ""));
+  }
+  const isCompoundScript =
+    lines.some((line) => !line.trim()) ||
+    lines.some((line) => /^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*=/.test(line)) ||
+    lines.some((line) => /(?:\$\(|<<[-~]?\s*\S+|^\s*(?:if|for|while|until|case|function)\b|^\s*[{}()]\s*$)/.test(line)) ||
+    hasMultilineShellQuote(lines);
+  if (isCompoundScript) return [lines.join("\n")];
+
+  lines = lines.filter((line) => line.trim());
   const commands = [];
   let continued = [];
   for (const line of lines) {

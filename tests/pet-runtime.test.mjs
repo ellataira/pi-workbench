@@ -179,6 +179,15 @@ test("session aggregation uses the newest record when priorities match", () => {
   assert.equal(selected.sessionId, "new");
 });
 
+test("native pet applies the same bounded inbox attention window", async () => {
+  const source = await readFile(
+    new URL("../pet-app/Sources/PiPet/main.swift", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /inboxAttentionWindow:\s*TimeInterval\s*=\s*15\s*\*\s*60/);
+  assert.match(source, /inboxItemRequiresAttention/);
+});
+
 test("pet snapshots are atomically stored as owner-only JSON", async () => {
   const runtimeDir = await mkdtemp(path.join(tmpdir(), "pi-pet-runtime-"));
   try {

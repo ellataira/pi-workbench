@@ -6,6 +6,9 @@ const portableInstallFiles = [
   new URL("../hooks/claude-agent-journal.sh", import.meta.url),
   new URL("../scripts/install-daily-review-reminder.sh", import.meta.url),
   new URL("../launchd/com.ellataira.pi-daily-memory-review.plist", import.meta.url),
+  new URL("../scripts/install-monthly-health-audit.sh", import.meta.url),
+  new URL("../launchd/com.ellataira.pi-monthly-health.plist", import.meta.url),
+  new URL("../scripts/install-pi-resume-clone.mjs", import.meta.url),
 ];
 
 test("install entry points do not embed a user home or Homebrew prefix", async () => {

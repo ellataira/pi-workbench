@@ -16,6 +16,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import {
+  buildFeatureUsage,
+  evaluatePiHealth,
   latestDatedFilename,
   mergePiUsage,
   summarizePiJsonl
@@ -103,6 +105,7 @@ journal.suspiciousDailyLinks = suspiciousDailyLinks;
 
 const maintenance = JSON.parse(await readFile(path.join(stateRoot, "maintenance.json"), "utf8").catch(() => "{}"));
 let reminder = { loaded: false, lastExitCode: null };
+let monthlyAudit = { loaded: false, lastExitCode: null };
 if (process.platform === "darwin") {
   try {
     const { stdout } = await execute("/bin/launchctl", [
@@ -115,11 +118,24 @@ if (process.platform === "darwin") {
       runs: Number(stdout.match(/runs = (\d+)/)?.[1] ?? 0)
     };
   } catch {}
+  try {
+    const { stdout } = await execute("/bin/launchctl", [
+      "print",
+      `gui/${process.getuid()}/com.ellataira.pi-monthly-health`
+    ]);
+    monthlyAudit = {
+      loaded: true,
+      lastExitCode: Number(stdout.match(/last exit code = (\d+)/)?.[1] ?? 0),
+      runs: Number(stdout.match(/runs = (\d+)/)?.[1] ?? 0)
+    };
+  } catch {}
 }
 
 const skillPath = path.join(home, ".agents", "skills", "agent-memory", "SKILL.md");
 const skillText = await readFile(skillPath, "utf8").catch(() => "");
 const issues = [];
+const health = evaluatePiHealth(pi);
+issues.push(...health.issues);
 if (journal.integrity !== "ok") issues.push("SQLite integrity check failed");
 if (journal.indexedSessions !== journal.sessionNotes + journal.coldIndexedSessions) issues.push("Session note and index counts differ");
 if (invalidSessionRepresentation) issues.push(`${invalidSessionRepresentation} session notes lack the compressed representation marker`);
@@ -137,16 +153,9 @@ if (
   );
 }
 
-pi.featureUsage = {
-  checkpoint: pi.toolCalls.journal_checkpoint ?? 0,
-  dailyReview: pi.toolCalls.journal_distillation_complete ?? 0,
-  recall: pi.recall.attempts,
-  pairTerminal: pi.toolCalls.pair_terminal ?? 0,
-  reviewUi: pi.toolCalls.review_open ?? 0,
-  subagents: pi.toolCalls.subagent ?? 0,
-  cmuxChildren: pi.toolCalls.cmux_session ?? 0,
-  mcp: pi.toolCalls.mcp ?? 0
-};
+pi.featureUsage = buildFeatureUsage(pi);
+pi.healthRates = health.rates;
+pi.watchedToolRates = health.toolRates;
 
 const report = {
   schemaVersion: 1,
@@ -162,6 +171,7 @@ const report = {
     localCompressedNoteRetentionDays: maintenance.localCompressedNoteRetentionDays ?? null
   },
   reminder,
+  monthlyAudit,
   issues
 };
 
@@ -175,7 +185,7 @@ function markdown(value) {
     .sort((a, b) => b[1].costUsd - a[1].costUsd)
     .map(([name, model]) => `| ${name} | ${model.calls} | ${model.inputTokens} | ${model.outputTokens} | ${model.cacheReadTokens} | $${model.costUsd.toFixed(2)} |`)
     .join("\n") || "| None observed | 0 | 0 | 0 | 0 | $0.00 |";
-  return `---\nschema_version: 1\nreport_kind: pi-monthly-health\ngenerated_at: ${JSON.stringify(value.generatedAt)}\nwindow_start: ${JSON.stringify(value.window.start)}\nwindow_end: ${JSON.stringify(value.window.end)}\n---\n\n# Pi health audit · ${value.generatedAt.slice(0, 10)}\n\nThis report contains aggregate metadata only. It never stores prompts, responses, tool arguments, or transcript text.\n\n## Result\n\n${value.issues.length ? value.issues.map((issue) => `- ⚠️ ${issue}`).join("\n") : "- ✅ No health issues detected."}\n\n## Usage\n\n- Session files active: ${value.pi.sessionFiles}\n- User turns: ${value.pi.userTurns}\n- Assistant runs: ${value.pi.assistantRuns}\n- Compactions: ${value.pi.compactions}\n- Recall attempts/results/cold results: ${value.pi.recall.attempts}/${value.pi.recall.results}/${value.pi.recall.coldResults}\n- Feature calls (checkpoint/daily review/review UI/subagents/cmux/MCP): ${value.pi.featureUsage.checkpoint}/${value.pi.featureUsage.dailyReview}/${value.pi.featureUsage.reviewUi}/${value.pi.featureUsage.subagents}/${value.pi.featureUsage.cmuxChildren}/${value.pi.featureUsage.mcp}\n- JSONL parse errors: ${value.pi.parseErrors}\n\n| Model | Calls | Input | Output | Cache read | Cost |\n|---|---:|---:|---:|---:|---:|\n${modelRows}\n\n| Tool | Success | Error |\n|---|---:|---:|\n${toolRows}\n\n## Memory\n\n- Indexed sessions / session notes / cold index: ${value.journal.indexedSessions} / ${value.journal.sessionNotes} / ${value.journal.coldIndexedSessions}\n- Promoted memories: ${value.journal.promotedMemories}\n- Topic rows / distinct topics: ${value.journal.topicRows} / ${value.journal.distinctTopics}\n- Daily rollups: ${value.journal.dailyRollups} (latest ${value.journal.latestDailyRollup ?? "none"})\n- Distillation complete through: ${value.maintenance.completedThrough ?? "unknown"}\n- SQLite integrity: ${value.journal.integrity}\n- Reminder runs / last exit: ${value.reminder.runs ?? "unknown"} / ${value.reminder.lastExitCode ?? "unknown"}\n`;
+  return `---\nschema_version: 1\nreport_kind: pi-monthly-health\ngenerated_at: ${JSON.stringify(value.generatedAt)}\nwindow_start: ${JSON.stringify(value.window.start)}\nwindow_end: ${JSON.stringify(value.window.end)}\n---\n\n# Pi health audit · ${value.generatedAt.slice(0, 10)}\n\nThis report contains aggregate metadata only. It never stores prompts, responses, tool arguments, or transcript text.\n\n## Result\n\n${value.issues.length ? value.issues.map((issue) => `- ⚠️ ${issue}`).join("\n") : "- ✅ No health issues detected."}\n\n## Usage\n\n- Session files active: ${value.pi.sessionFiles}\n- User turns: ${value.pi.userTurns}\n- Assistant runs: ${value.pi.assistantRuns}\n- Compactions: ${value.pi.compactions}\n- Recall attempts/results/cold results: ${value.pi.recall.attempts}/${value.pi.recall.results}/${value.pi.recall.coldResults}\n- Feature calls (checkpoint/daily review/review UI/pair terminal/subagents/cmux/MCP): ${value.pi.featureUsage.checkpoint}/${value.pi.featureUsage.dailyReview}/${value.pi.featureUsage.reviewUi}/${value.pi.featureUsage.pairTerminal}/${value.pi.featureUsage.subagents}/${value.pi.featureUsage.cmuxChildren}/${value.pi.featureUsage.mcp}\n- Checkpoint / cmux / context execution / context indexing error rates: ${(value.pi.healthRates.checkpointErrorRate * 100).toFixed(1)}% / ${(value.pi.healthRates.cmuxSessionErrorRate * 100).toFixed(1)}% / ${(value.pi.healthRates.contextExecuteFileErrorRate * 100).toFixed(1)}% / ${(value.pi.healthRates.contextFetchIndexErrorRate * 100).toFixed(1)}%\n- Maximum-length stops / assistant runs: ${(value.pi.healthRates.lengthStopRate * 100).toFixed(1)}%\n- Compactions / user turns: ${(value.pi.healthRates.compactionsPerUserTurn * 100).toFixed(1)}%\n- JSONL parse errors: ${value.pi.parseErrors}\n\n| Model | Calls | Input | Output | Cache read | Cost |\n|---|---:|---:|---:|---:|---:|\n${modelRows}\n\n| Tool | Success | Error |\n|---|---:|---:|\n${toolRows}\n\n## Memory\n\n- Indexed sessions / session notes / cold index: ${value.journal.indexedSessions} / ${value.journal.sessionNotes} / ${value.journal.coldIndexedSessions}\n- Promoted memories: ${value.journal.promotedMemories}\n- Topic rows / distinct topics: ${value.journal.topicRows} / ${value.journal.distinctTopics}\n- Daily rollups: ${value.journal.dailyRollups} (latest ${value.journal.latestDailyRollup ?? "none"})\n- Distillation complete through: ${value.maintenance.completedThrough ?? "unknown"}\n- SQLite integrity: ${value.journal.integrity}\n- Reminder runs / last exit: ${value.reminder.runs ?? "unknown"} / ${value.reminder.lastExitCode ?? "unknown"}\n- Monthly audit loaded / runs / last exit: ${value.monthlyAudit.loaded} / ${value.monthlyAudit.runs ?? "unknown"} / ${value.monthlyAudit.lastExitCode ?? "unknown"}\n`;
 }
 
 if (process.argv.includes("--write")) {

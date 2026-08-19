@@ -10,6 +10,7 @@ import {
   clearCompletedInbox,
   clearStaleInbox,
   createInboxItem,
+  inboxItemRequiresPetAttention,
   selectInboxItem,
   upsertInboxItem
 } from "../src/action-inbox.mjs";
@@ -111,6 +112,38 @@ test("inbox choices use state, action, age, and source instead of raw identifier
     }
   ]);
   assert.doesNotMatch(buildInboxChoices([item], now)[0].label, /secret-uuid|workspace:7/);
+});
+
+test("health audit failures have a stable human-readable inbox label", () => {
+  const item = createInboxItem({
+    id: "automation:pi-monthly-health",
+    state: "failed",
+    source: "automation",
+    code: "health-audit",
+    automationId: "pi-monthly-health",
+    updatedAt: "2026-08-13T12:00:00Z"
+  });
+  assert.match(buildInboxChoices([item], new Date("2026-08-13T12:05:00Z"))[0].label, /Pi health audit/);
+});
+
+test("the pet stops surfacing old inbox alerts without deleting them", () => {
+  const now = new Date("2026-08-13T12:30:00Z");
+  const recent = createInboxItem({
+    id: "failure:recent",
+    state: "failed",
+    source: "automation",
+    code: "health-audit",
+    updatedAt: "2026-08-13T12:20:00Z"
+  });
+  const old = createInboxItem({
+    ...recent,
+    id: "failure:old",
+    updatedAt: "2026-08-13T12:00:00Z"
+  });
+
+  assert.equal(inboxItemRequiresPetAttention(recent, now), true);
+  assert.equal(inboxItemRequiresPetAttention(old, now), false);
+  assert.equal(inboxItemRequiresPetAttention({ ...recent, state: "completed" }, now), true);
 });
 
 test("inbox maintenance clears completed work and only stale non-actionable work", () => {

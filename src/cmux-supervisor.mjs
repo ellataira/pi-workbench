@@ -4,7 +4,7 @@ export function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
-function slug(value, fallback = "child") {
+export function slug(value, fallback = "child") {
   const normalized = String(value ?? "")
     .trim()
     .toLowerCase()
@@ -59,6 +59,29 @@ export function buildChildCommand({ includeTask = true } = {}) {
   return `${task}session="$PI_CMUX_CHILD_SESSION_ID"; name="$PI_CMUX_CHILD_NAME"; unset PI_CMUX_CHILD_TASK PI_CMUX_CHILD_SESSION_ID PI_CMUX_CHILD_NAME; exec pi --session-id "$session" --name "$name"${taskArgument}`;
 }
 
+export function buildDetachedForkCommand({ includeTask = false } = {}) {
+  const task = includeTask ? `task="$PI_CMUX_FORK_TASK"; ` : "";
+  const taskArgument = includeTask ? ` "$task"` : "";
+  const unset = includeTask
+    ? "PI_CMUX_FORK_SESSION_FILE PI_CMUX_FORK_TASK"
+    : "PI_CMUX_FORK_SESSION_FILE";
+  return `${task}session="$PI_CMUX_FORK_SESSION_FILE"; unset ${unset}; exec pi --session "$session"${taskArgument}`;
+}
+
+export function buildDetachedForkEnvironment({
+  sessionFile,
+  parentSessionId,
+  task
+}) {
+  return [
+    `AGENT_JOURNAL_PARENT_CLIENT=pi`,
+    `AGENT_JOURNAL_PARENT_SESSION_ID=${parentSessionId}`,
+    `AGENT_JOURNAL_CHILD_CLASS=substantial`,
+    `PI_CMUX_FORK_SESSION_FILE=${sessionFile}`,
+    ...(task ? [`PI_CMUX_FORK_TASK=${task}`] : [])
+  ];
+}
+
 export function buildChildEnvironment({
   sessionId,
   name,
@@ -80,7 +103,7 @@ export function buildShellReadyCommand(readyPath) {
   return `: > ${shellQuote(readyPath)}`;
 }
 
-export function buildSpawnArguments({ name, cwd, environment = [] }) {
+export function buildSpawnArguments({ name, cwd, environment = [], focus = false }) {
   const args = [
     "--id-format",
     "both",
@@ -91,7 +114,7 @@ export function buildSpawnArguments({ name, cwd, environment = [] }) {
     cwd
   ];
   for (const value of environment) args.push("--env", value);
-  args.push("--focus", "false");
+  args.push("--focus", String(focus));
   return args;
 }
 
@@ -142,4 +165,6 @@ ORCHESTRATION POLICY
 - Cap ordinary fan-out at four concurrent children and one level of nesting.
 - Give substantial children a concrete deliverable and verification contract; journal them as linked child sessions.
 - Never delegate merely to avoid doing a straightforward task.
+- When the user explicitly asks to start work in a /fork, create a detached fork in a new cmux tab; never substitute a background subagent.
+- After launching a detached /fork, do not continue that task in the parent session.
 `.trim();

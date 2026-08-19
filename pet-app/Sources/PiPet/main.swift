@@ -5,6 +5,7 @@ import UserNotifications
 
 private let cellWidth: CGFloat = 192
 private let cellHeight: CGFloat = 208
+private let inboxAttentionWindow: TimeInterval = 15 * 60
 
 private struct PetSnapshot: Codable {
     let version: Int
@@ -196,6 +197,10 @@ private func parsedDate(_ value: String) -> Date {
         return date
     }
     return ISO8601DateFormatter().date(from: value) ?? .distantPast
+}
+
+private func inboxItemRequiresAttention(_ item: ActionInboxItem, now: Date = Date()) -> Bool {
+    now.timeIntervalSince(parsedDate(item.updatedAt)) <= inboxAttentionWindow
 }
 
 private func processIsAlive(_ pid: Int32) -> Bool {
@@ -645,7 +650,9 @@ private final class PetController {
     }
 
     private func refresh() {
-        let inbox = store.inboxItems().sorted { left, right in
+        let inbox = store.inboxItems().filter {
+            inboxItemRequiresAttention($0)
+        }.sorted { left, right in
             let priorityDifference = phasePriority(left.phase) - phasePriority(right.phase)
             if priorityDifference != 0 {
                 return priorityDifference > 0

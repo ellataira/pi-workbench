@@ -210,6 +210,25 @@ test("project memories stay scoped and daily rollups contain links rather than c
   assert.doesNotMatch(text, /Implement a durable session journal/);
 });
 
+test("daily review catch-up creates link-only rollups through the reviewed date", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-journal-rollup-catchup-"));
+  const journal = new AgentJournal({
+    vaultRoot: path.join(root, "vault"),
+    stateRoot: path.join(root, "state")
+  });
+  await journal.ingest(checkpoint({ timestamp: "2026-08-01T12:00:00.000Z" }));
+
+  const result = await journal.dailyRollupsThrough("2026-08-03");
+
+  assert.deepEqual(result.dates, ["2026-08-01", "2026-08-02", "2026-08-03"]);
+  const emptyDay = await readFile(
+    path.join(root, "vault", "daily", "2026", "08", "2026-08-02.md"),
+    "utf8"
+  );
+  assert.match(emptyDay, /Session summaries: 0/);
+  assert.doesNotMatch(emptyDay, /Implement a durable session journal/);
+});
+
 test("recall marks a relevant missing local note for verified Drive rehydration", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-journal-drive-tier-"));
   const journal = new AgentJournal({

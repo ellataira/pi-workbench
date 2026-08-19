@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildFeatureUsage,
+  evaluatePiHealth,
   latestDatedFilename,
+  rollupDatesThrough,
   summarizePiJsonl
 } from "../src/pi-health-audit.mjs";
 
@@ -80,4 +83,57 @@ test("health audit identifies the newest link-rollup date", () => {
     "2026-08-09"
   );
   assert.equal(latestDatedFilename([]), null);
+});
+
+test("health audit counts explicit review and pair metrics without counting suggestions", () => {
+  const usage = buildFeatureUsage({
+    toolCalls: { review_open: 2, pair_terminal: 3, journal_checkpoint: 4 },
+    customEntries: {
+      "pi-review-open-metrics": 5,
+      "pi-review-suggestions-v1": 900,
+      "pi-pair-open-metrics": 7
+    },
+    recall: { attempts: 1 }
+  });
+  assert.equal(usage.reviewUi, 5);
+  assert.equal(usage.pairTerminal, 7);
+  assert.equal(usage.checkpoint, 4);
+
+  const legacy = buildFeatureUsage({
+    toolCalls: { review_open: 2, pair_terminal: 3 },
+    customEntries: {},
+    recall: { attempts: 0 }
+  });
+  assert.equal(legacy.reviewUi, 2);
+  assert.equal(legacy.pairTerminal, 3);
+});
+
+test("health audit reports actionable rates only after bounded minimum samples", () => {
+  const result = evaluatePiHealth({
+    assistantRuns: 1000,
+    compactions: 20,
+    stopReasons: { length: 12 },
+    toolResults: {
+      journal_checkpoint: { success: 85, error: 15 },
+      cmux_session: { success: 80, error: 20 },
+      ctx_execute_file: { success: 90, error: 10 },
+      ctx_fetch_and_index: { success: 18, error: 2 }
+    }
+  });
+  assert.equal(result.rates.checkpointErrorRate, 0.15);
+  assert.equal(result.rates.lengthStopRate, 0.012);
+  assert.match(result.issues.join("\n"), /checkpoint error rate/i);
+  assert.match(result.issues.join("\n"), /cmux_session error rate/i);
+  assert.doesNotMatch(result.issues.join("\n"), /ctx_fetch_and_index/);
+});
+
+test("daily rollup catch-up is bounded and ends at reviewed date", () => {
+  assert.deepEqual(
+    rollupDatesThrough("2026-08-09", "2026-08-12", { limit: 3 }),
+    ["2026-08-10", "2026-08-11", "2026-08-12"]
+  );
+  assert.deepEqual(
+    rollupDatesThrough(undefined, "2026-08-02", { limit: 3, firstDate: "2026-08-01" }),
+    ["2026-08-01", "2026-08-02"]
+  );
 });

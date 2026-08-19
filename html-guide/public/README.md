@@ -31,7 +31,9 @@ npm test
 npm run bootstrap -- --replace-existing
 npm run install:pi-copy-picker
 npm run install:pi-prompt-echo
+npm run install:pi-resume-clone
 npm run install:daily-review
+npm run install:monthly-audit
 ```
 
 `bootstrap` links the checkout at
@@ -91,10 +93,34 @@ Inside Pi:
   clean merged child.
 - Ask the parent to focus, message, or interrupt a named child; it uses the
   `cmux_session` tool, which rejects unknown workspaces.
-- `/pair start` creates a terminal split to the right. Pi proposes one command,
-  you run it visibly, and Pi automatically analyzes the resulting screen delta
-  before proposing one next command. It never types into or executes through
-  the paired terminal. `/pair stop` detaches observation without closing it.
+- `/fork` selects an earlier user message, creates an independent session at
+  that point, and opens it in a new focused cmux tab with the selected prompt
+  ready to edit. The parent session never switches or continues the forked
+  work. Asking Pi to "start this task in a /fork" uses the same detached path,
+  starts the task in the new tab, and does not substitute a background
+  subagent. Detached forks share the current checkout; use `/agents persistent`
+  when implementation needs an isolated worktree.
+- `/resume` also supports cloning a saved session without replacing the current
+  one: highlight the session and press `Alt+Enter`. Pi opens the clone in a new
+  focused cmux tab; truncated session paths never need to be copied manually.
+- `/rename <name>` renames the active session using Pi's native session-name
+  metadata. `/rename` without an argument reports the current name.
+- `/pair start` creates a terminal split to the right and labels it **Pi Pair
+  Terminal**. It keeps your normal terminal colors stable instead of changing
+  the background while commands run. An isolated owner-only zsh profile loads
+  your normal shell configuration without changing `~/.zshrc`. Pi proposes one command, you run it
+  visibly, and Pi automatically analyzes the resulting screen delta before
+  proposing one next command. With an empty paired prompt, press Tab to insert
+  that command for inspection or editing; press Enter yourself to execute it.
+  If the prompt already contains text or no Pi suggestion is pending, Tab keeps
+  normal shell completion. Pi never types into or executes through the paired
+  terminal. Pair ownership belongs to the originating cmux terminal,
+  so `/clone`, `/resume`, `/new`, and `/reload` keep watching the same split.
+  A detached `/fork` opens elsewhere and does not steal the parent's watcher.
+  `/reload` also reloads the pair helper implementation instead of using
+  stale module exports. `/pair reconnect` adopts an existing split after a legacy disconnect.
+  `/pair stop` closes the dedicated split; manually closing the split clears
+  pair mode after the bounded disconnect check.
 - Use `/tree` inside a child and `/resume` or its session ID to return later.
 - `/subagents-fleet` shows background subagent work.
 - Use background scouts/reviewers for lightweight fan-out. Use workers or
@@ -207,10 +233,14 @@ Inside Pi:
   after importing legacy journal Markdown; it sanitizes in place, creates no
   raw-content backup, replaces task-shaped legacy summaries with neutral
   metadata, merges duplicate identities, and rebuilds SQLite.
-- Run `npm run audit:pi -- --days 30 --write` monthly for aggregate Pi session,
-  model, token, cost, tool, checkpoint, compaction, retrieval, index, retention,
-  and reminder health. Reports contain no prompts, responses, queries, recalled
-  content, or tool arguments and live under `agent-journal/audits/YYYY/MM/`.
+- Install the monthly audit with `npm run install:monthly-audit`. At 10:00 on
+  the first day of each month it catches up link-only daily rollups, writes the
+  aggregate Pi health report, runs the memory canary and full test suite, and
+  adds one fixed `/inbox` failure item when any check regresses. Reports include
+  bounded error rates plus explicit review/pair-open counts; they contain no
+  prompts, responses, queries, recalled content, or tool arguments and live
+  under `agent-journal/audits/YYYY/MM/`. Run
+  `npm run audit:pi -- --days 30 --write` for a manual report.
 - Invoke the shared `code-review` skill for a focused read-only review of the
   requested diff or current working tree.
 - Invoke the shared `review-changes` skill for a heavyweight read-only review
@@ -222,6 +252,7 @@ Inside Pi:
   `~/Documents/Obsidian Vault/ella.taira/agent-journal/memory`
 - Daily link rollups:
   `~/Documents/Obsidian Vault/ella.taira/agent-journal/daily`
+  Completing daily distillation catches these up through the reviewed date.
 
 Pi's own local session store is the sole history-bearing boundary. It remains
 enabled for 30 days because Pi-native `/tree` and `/resume` require it. This
@@ -259,6 +290,9 @@ Space, and is allowed alongside full-screen apps.
   then settles into the slower idle loop. macOS Reduce Motion shows one frame.
 - Click Paddington to focus the originating cmux workspace. A completed state
   is acknowledged by the same click.
+- New inbox failures, approvals, and completions take priority for 15 minutes.
+  After that, they remain in `/inbox` but stop pinning Paddington above live Pi
+  activity; opening `/inbox` is the durable follow-up path.
 - Right-click to hide or quit the companion.
 - `/pet` reports status. `/pet on` relaunches/enables it and `/pet off` stops
   publishing the current Pi session.
@@ -298,41 +332,55 @@ npm run build:pet
 - `/datadog setup` configures the Datadog-native MCP plugin.
 - `/ctx-stats` shows context-mode savings.
 - `/preview <path>` previews Markdown.
-- `/review` is the single review entry point. With no argument it opens a
-  contextual chooser for the last Pi turn, a complete file, an unstaged or
-  staged Git diff, or a comparison with a requested base. The chooser names
-  the files in the last-turn diff and recommends recently changed files for
-  complete-file review. `/review <path>` bypasses the chooser and opens that
-  file directly. Markdown opens as a rendered GFM preview; select rendered text
+- `/review` is the single review entry point. With no argument it opens or
+  focuses one cumulative session-review popout. **Review modes** switches among
+  the exact last Pi turn, staged changes, `HEAD^..HEAD`, and
+  `origin/main...HEAD`. **Session files · newest first** contains only files
+  changed during this Pi session, ordered by modification time. Every entry
+  shows its filename and repository-relative or home-relative path; selecting a
+  Markdown file opens the rendered document rather than a diff. Explicit
+  `/review <path>` remains available for intentionally opening another file.
+  Pi verifies the browser
+  URL before retaining a cmux popout, removes the placeholder terminal so the
+  browser uses the full window, closes incomplete windows, and falls back to the
+  default browser. The page also adapts its sidebar and padding at narrow widths.
+  `/review choose` opens the advanced chooser for the last
+  Pi turn, an unstaged or staged Git diff, a requested base, or a file outside
+  the session set. `/review <path>` opens that file directly. Markdown opens as
+  a rendered GFM preview; select rendered text
   and choose the nearby **Comment** action to
   open a textbox beside that exact passage. Completing it creates an inline
-  `[an: ...]` chip that can be edited or removed in place. **Edit source**
+  `[an: ...]` annotation that can be edited or removed in place. **Edit source**
   exposes the raw Markdown editor, while the collapsible tray remains the batch
   overview. Unfinished comments cannot be saved or submitted. Text files are
-  read-only. Rendered annotation chips use compact 12px pink styling with an
-  explicitly left-aligned comment element, including when text wraps. Each new
+  read-only. Rendered annotations use compact 12px pink styling, a flat
+  three-pixel corner, and a pink left rule instead of an oval border. Comment
+  text stays explicitly left-aligned, including when it wraps. Each new
   selection remains armed through transient browser selection collapse and
   snapshots its action before focus changes, so adding later comments remains
   reliable after the preview already contains annotations. **Update & add
   another** saves the active comment and arms the next rendered selection,
-  opening its editor automatically without depending on a second bubble click.
-  Existing annotation chips are non-selectable and removed from both the
+  opening its editor automatically without depending on a second annotation click.
+  Existing annotations are non-selectable and removed from both the
   selected text and its mapping context, so a later selection may cross an
   earlier comment without producing a source-mapping error. Multi-line
   selections also use a bounded word-sequence fallback when rendered block or
   table spacing differs from the Markdown source. Inline-code spans are
   projected literally, so wrapped identifiers containing underscores map back
   without treating their characters as emphasis markers.
-  `npm run test:e2e-review` validates both the ordinary second-bubble workflow
+  `npm run test:e2e-review` validates both the ordinary second-annotation workflow
   and **Update & add another**, plus selections spanning rendered lines and
   wrapped inline-code identifiers, using native mouse selections in isolated
   headless Chrome.
 - `review_open` gives the agent the same surface programmatically. When you ask
   to review files or a diff, Pi opens it directly instead of returning paths
-  and asking you to type `/review`. Up to eight files share one review window
-  with file tabs. Git review may name a different repository directory, so an
-  exact range can open without changing the active Pi workspace.
-- The **Changes from last Pi turn** choice opens one combined diff containing
+  and asking you to type `/review`. Bare `/review` opens one dedicated cmux
+  popout for the session and later calls reuse that window. Its left sidebar
+  accumulates up to 100 files from that session only; file contents load only
+  when selected. If `/workspace` visits more than one repository, the sidebar
+  keeps the session files together with unambiguous paths. Git review may name a different repository
+  directory, so an exact range can open without changing the active Pi workspace.
+- The advanced `/review choose` menu retains **Changes from last Pi turn**, which opens one combined diff containing
   only changes made during
   the immediately preceding Pi turn. It compares the actual pre-turn worktree
   with the settled worktree, so earlier dirty changes are excluded unless the
@@ -341,10 +389,13 @@ npm run build:pet
   files are supported. Internal `.pi-subagents` artifacts, nested Claude
   worktrees, runtime state, build output, and dependencies are filtered before
   snapshot limits and never create skipped-file warnings.
-- After a changed turn, Pi shows **Review ready — run /review** and a compact
-  list of the files included in that view. A no-change turn clears the previous
-  diff instead of silently retaining stale work.
-- The Git choices open generated unstaged, staged, or base-comparison diffs
+- After a changed turn, Pi shows **Session review ready — run /review** and the
+  cumulative edited-file count. If the popout is already open, its file sidebar
+  updates in place and re-sorts files by modification time; clean file and diff views follow disk updates without
+  stealing focus. A no-change turn clears only the previous-turn diff instead
+  of silently retaining stale work.
+- The workspace mode switcher opens generated last-turn, staged, latest-commit,
+  and branch-from-main diffs. The advanced Git choices also support unstaged or base-comparison diffs
   with persistent line comments. Direct forms use `/review git`,
   `/review git staged`, `/review git <base>`, or an exact range such as
   `/review git <commit>^..<commit>`.

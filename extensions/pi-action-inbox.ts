@@ -38,6 +38,7 @@ const Code = Type.Union([
 	Type.Literal("authentication"),
 	Type.Literal("daily-distillation"),
 	Type.Literal("external-approval"),
+	Type.Literal("health-audit"),
 	Type.Literal("subagent-complete"),
 	Type.Literal("subagent-failed"),
 	Type.Literal("tool-error"),
