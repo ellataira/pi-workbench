@@ -89,6 +89,71 @@ test("copy keeps a continued multi-line shell command together", () => {
   ]);
 });
 
+test("copy keeps a continued curl with multiline quoted JSON together", () => {
+  const script = [
+    "cd /Users/ella/example-bundles/bundle-001 && \\",
+    "  curl --fail-with-body -sS \\",
+    "    -X POST 'https://api.example.test/api/v1/scenarios/ingest' \\",
+    "    -H 'Content-Type: application/json' \\",
+    "    -d '{",
+    '      "org_id": 12345,',
+    '      "s3_prefix": "examples/bundle-001",',
+    '      "force": false,',
+    '      "dry_run": false',
+    "    }' | tee ingest-result.json"
+  ].join("\n");
+  const text = `Run this:\n\n\`\`\`bash\n${script}\n\`\`\``;
+
+  assert.deepEqual(extractCliCommands(text), [script]);
+  assert.equal(buildCopyChoices(text)[0].command, script);
+});
+
+test("copy keeps assignments, command substitutions, and blank lines as one shell script", () => {
+  const script = [
+    'EDP_URL="https://api.example.test"',
+    'S3_PREFIX="examples/bundle-001"',
+    "",
+    'BODY="$(' ,
+    "  jq -nc \\",
+    "    --argjson org_id 12345 \\",
+    "    --arg s3_prefix \"$S3_PREFIX\" \\",
+    "    '{",
+    "      org_id: $org_id,",
+    "      s3_prefix: $s3_prefix,",
+    "      force: false,",
+    "      dry_run: true",
+    "    }'",
+    ')"',
+    "",
+    "dd-auth --domain example.test -- \\",
+    "  curl -sS \\",
+    "    -D - \\",
+    "    -w '\\nHTTP_STATUS=%{http_code}\\n' \\",
+    "    -X POST \\",
+    "    \"$EDP_URL/api/v1/scenarios/ingest\" \\",
+    "    -H 'Content-Type: application/json' \\",
+    '    --data-binary "$BODY"'
+  ].join("\n");
+  const text = `Run this:\n\n\`\`\`bash\n${script}\n\`\`\``;
+
+  assert.deepEqual(extractCliCommands(text), [script]);
+  assert.equal(buildCopyChoices(text)[0].command, script);
+});
+
+test("copy removes shared Markdown indentation without flattening a shell script", () => {
+  const text = [
+    "```bash",
+    "   ONE=1",
+    "   ",
+    "   echo \"$ONE\" | \\",
+    "     sed 's/1/one/'",
+    "```"
+  ].join("\n");
+  assert.deepEqual(extractCliCommands(text), [
+    "ONE=1\n\necho \"$ONE\" | \\\n  sed 's/1/one/'"
+  ]);
+});
+
 test("copy reads only the latest assistant prose from the active branch", () => {
   assert.equal(
     latestAssistantText([
@@ -118,7 +183,7 @@ test("copy reads only the latest assistant prose from the active branch", () => 
   );
 });
 
-test("session utilities register rewind and a non-conflicting command picker", async () => {
+test("session utilities register rewind, rename, and a non-conflicting command picker", async () => {
   const source = await readFile(
     new URL("../extensions/pi-session-utilities.ts", import.meta.url),
     "utf8"
@@ -129,4 +194,7 @@ test("session utilities register rewind and a non-conflicting command picker", a
   assert.doesNotMatch(source, /registerCommand\("copy"/);
   assert.match(source, /copyToClipboard\(choice\.command\)/);
   assert.match(source, /buildCopyChoices/);
+  assert.match(source, /registerCommand\("rename"/);
+  assert.match(source, /pi\.setSessionName\(name\)/);
+  assert.match(source, /pi\.getSessionName\(\)/);
 });

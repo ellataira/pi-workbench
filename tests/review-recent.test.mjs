@@ -8,7 +8,9 @@ import { promisify } from "node:util";
 
 import {
   beginRecentTurn,
+  buildRecoveredTargetDiff,
   captureRecentPath,
+  captureRecentPathInBaselines,
   finishRecentTurn
 } from "../src/review-recent.mjs";
 
@@ -102,6 +104,44 @@ test("non-Git fallback compares directly captured files without scanning a direc
     assert.deepEqual(result.changedPaths, ["doc.md"]);
     assert.match(result.diff, /-before/);
     assert.match(result.diff, /\+after/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("direct edits outside the launch repository get their own bounded baseline", async () => {
+  const repository = await createRepository();
+  const external = await mkdtemp(path.join(tmpdir(), "pi-review-external-"));
+  try {
+    const baselines = new Map();
+    const launchBaseline = await beginRecentTurn(repository);
+    baselines.set(launchBaseline.root, launchBaseline);
+    const target = path.join(external, "target.md");
+    await writeFile(target, "before\n", "utf8");
+
+    const targetBaseline = await captureRecentPathInBaselines(baselines, target);
+    await writeFile(target, "after\n", "utf8");
+    const result = await finishRecentTurn(targetBaseline);
+
+    assert.equal(baselines.size, 2);
+    assert.deepEqual(result.changedPaths, ["target.md"]);
+    assert.match(result.diff, /-before/);
+    assert.match(result.diff, /\+after/);
+  } finally {
+    await rm(repository, { recursive: true, force: true });
+    await rm(external, { recursive: true, force: true });
+  }
+});
+
+test("legacy target recovery still offers an honestly labelled full-file diff", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-recovered-"));
+  try {
+    const target = path.join(root, "target.md");
+    await writeFile(target, "# Current target\n", "utf8");
+    const diff = await buildRecoveredTargetDiff([target]);
+    assert.match(diff, /--- \/dev\/null/);
+    assert.match(diff, /\+\+\+ b\//);
+    assert.match(diff, /\+# Current target/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

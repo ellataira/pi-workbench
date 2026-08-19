@@ -3,13 +3,18 @@ import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/p
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	SessionManager,
+	type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import {
 	buildAgentChoices,
 	buildChildCommand,
 	buildChildEnvironment,
+	buildDetachedForkCommand,
+	buildDetachedForkEnvironment,
 	buildShellReadyCommand,
 	buildSpawnArguments,
 	buildWorktreeArguments,
@@ -17,6 +22,7 @@ import {
 	orchestrationPolicy,
 	parseWorkspaceIdentifiers,
 	requireOwnedWorkspace,
+	slug,
 	waitForPath,
 } from "../src/cmux-supervisor.mjs";
 import {
@@ -27,6 +33,7 @@ import {
 
 const Action = Type.Union([
 	Type.Literal("spawn"),
+	Type.Literal("fork"),
 	Type.Literal("list"),
 	Type.Literal("focus"),
 	Type.Literal("send"),
@@ -118,12 +125,14 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		cwd,
 		command,
 		environment,
+		focus = false,
 	}: {
 		sessionId: string;
 		name: string;
 		cwd: string;
 		command: string;
 		environment: string[];
+		focus?: boolean;
 	}) {
 		await mkdir(launchRuntimeDir, { recursive: true, mode: 0o700 });
 		const shellReadyPath = path.join(launchRuntimeDir, `${sessionId}.shell-ready`);
@@ -143,6 +152,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 						...environment,
 						`PI_CMUX_CHILD_STARTED_PATH=${childStartedPath}`,
 					],
+					focus,
 				}),
 			);
 			identifiers = parseWorkspaceIdentifiers(output);
@@ -171,6 +181,85 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				rm(shellReadyPath, { force: true }),
 				rm(childStartedPath, { force: true }),
 			]);
+		}
+	}
+
+	async function createDetachedFork({
+		ctx,
+		entryId,
+		position,
+		task,
+		name,
+		prefill,
+	}: {
+		ctx: any;
+		entryId: string;
+		position: "before" | "at";
+		task?: string;
+		name?: string;
+		prefill?: string;
+	}) {
+		if (!process.env.CMUX_WORKSPACE_ID) {
+			throw new Error("Detached /fork requires Pi to be running inside cmux");
+		}
+		const sourceSessionFile = ctx.sessionManager.getSessionFile();
+		if (!sourceSessionFile) {
+			throw new Error("The current session has not been saved yet");
+		}
+		const selectedEntry = ctx.sessionManager.getEntry(entryId);
+		if (!selectedEntry) throw new Error("The selected fork point no longer exists");
+		const targetEntryId = position === "at" ? entryId : selectedEntry.parentId;
+		if (!targetEntryId) {
+			throw new Error("Cannot detach a fork before the first saved session entry");
+		}
+
+		const detached = SessionManager.open(
+			sourceSessionFile,
+			ctx.sessionManager.getSessionDir(),
+		);
+		const sessionFile = detached.createBranchedSession(targetEntryId);
+		if (!sessionFile) throw new Error("Failed to create the detached fork session");
+
+		const parentSessionId = ctx.sessionManager.getSessionId();
+		const labelSource = name?.trim() || task?.trim() || prefill?.trim() || "fork";
+		const label = slug(labelSource, "fork");
+		let launch: { identifiers: string[]; output: string } | undefined;
+		try {
+			launch = await launchWorkspace({
+				sessionId: detached.getSessionId(),
+				name: `fork · ${label}`,
+				cwd: ctx.sessionManager.getCwd(),
+				command: buildDetachedForkCommand({ includeTask: Boolean(task?.trim()) }),
+				environment: buildDetachedForkEnvironment({
+					sessionFile,
+					parentSessionId,
+					task: task?.trim(),
+				}),
+				focus: true,
+			});
+			if (prefill) {
+				await cmux(["send", "--workspace", launch.identifiers[0], prefill]);
+			}
+			const child: OwnedChild = {
+				identifiers: launch.identifiers,
+				sessionId: detached.getSessionId(),
+				parentSessionId,
+				name: `fork · ${label}`,
+				createdAt: new Date().toISOString(),
+				cwd: ctx.sessionManager.getCwd(),
+			};
+			await appendRegistry(child);
+			return { ...child, sessionFile, output: launch.output };
+		} catch (error) {
+			if (launch?.identifiers[0]) {
+				try {
+					await cmux(["close-workspace", "--workspace", launch.identifiers[0]]);
+				} catch {
+					// Preserve the launch error; cmux may already have closed the tab.
+				}
+			}
+			await rm(sessionFile, { force: true });
+			throw error;
 		}
 	}
 
@@ -487,7 +576,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		name: "cmux_session",
 		label: "cmux child session",
 		description:
-			"Manage owned, persistent Pi-native child sessions in cmux. Implementing children get isolated Git worktrees by default and remain enterable with /tree and /resume; use pi-subagents for lightweight fan-out.",
+			"Manage owned, persistent Pi-native child sessions in cmux. Use action=fork whenever the user explicitly asks to start work in a /fork: it copies the current conversation branch into a focused cmux tab, starts the task there, and leaves the parent idle. Implementing spawn children get isolated Git worktrees by default; use pi-subagents only for lightweight fan-out that was not requested as a /fork.",
 		parameters: Type.Object({
 			action: Action,
 			workspace: Type.Optional(Type.String()),
@@ -506,6 +595,19 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				case "spawn":
 					details = await spawn(params, ctx.sessionManager.getSessionId());
 					break;
+				case "fork": {
+					if (!params.task?.trim()) throw new Error("fork requires a concrete task");
+					const leafId = ctx.sessionManager.getLeafId();
+					if (!leafId) throw new Error("The current session has nothing to fork yet");
+					details = await createDetachedFork({
+						ctx,
+						entryId: leafId,
+						position: "at",
+						task: params.task,
+						name: params.name,
+					});
+					break;
+				}
 				case "list":
 					details = {
 						children: await readRegistry(),
@@ -677,6 +779,41 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	pi.on("before_agent_start", async (event) => ({
 		systemPrompt: `${event.systemPrompt}\n\n${orchestrationPolicy}\n`,
 	}));
+
+	pi.on("session_before_fork", async (event, ctx) => {
+		// Native /clone emits the same hook with position=at. Keep clone's native
+		// behavior; only the /fork message selector opens a detached cmux tab.
+		if (event.position !== "before") return;
+		const selected = ctx.sessionManager.getEntry(event.entryId);
+		const content =
+			selected?.type === "message" && selected.message.role === "user"
+				? selected.message.content
+				: "";
+		const prefill =
+			typeof content === "string"
+				? content
+				: Array.isArray(content)
+					? content
+						.filter((part: any) => part?.type === "text")
+						.map((part: any) => part.text)
+						.join("\n")
+					: "";
+		try {
+			await createDetachedFork({
+				ctx,
+				entryId: event.entryId,
+				position: event.position,
+				prefill,
+			});
+			ctx.ui.notify(
+				"Fork opened in a new cmux tab; the parent session is unchanged.",
+				"info",
+			);
+		} catch (error) {
+			ctx.ui.notify(`Fork was not opened: ${String(error)}`, "error");
+		}
+		return { cancel: true };
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		const startedPath = process.env.PI_CMUX_CHILD_STARTED_PATH;

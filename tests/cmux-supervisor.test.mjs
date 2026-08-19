@@ -6,6 +6,8 @@ import {
   buildWorktreeArguments,
   buildChildCommand,
   buildChildEnvironment,
+  buildDetachedForkCommand,
+  buildDetachedForkEnvironment,
   buildShellReadyCommand,
   buildSpawnArguments,
   childWorktreePlan,
@@ -75,6 +77,51 @@ test("builds a non-focused workspace without an eager launch command", () => {
   assert.equal(args.includes("--command"), false);
 });
 
+test("builds a focused cmux tab for a detached fork", () => {
+  const args = buildSpawnArguments({
+    name: "Pi fork · research",
+    cwd: "/repo",
+    environment: ["PI_CMUX_FORK_SESSION_FILE=/tmp/fork.jsonl"],
+    focus: true
+  });
+  assert.deepEqual(args.slice(-2), ["--focus", "true"]);
+});
+
+test("launches an existing fork session without embedding its path in terminal input", () => {
+  const command = buildDetachedForkCommand();
+  const environment = buildDetachedForkEnvironment({
+    sessionFile: "/tmp/session with spaces.jsonl",
+    parentSessionId: "parent-123"
+  });
+
+  assert.equal(
+    command,
+    'session="$PI_CMUX_FORK_SESSION_FILE"; unset PI_CMUX_FORK_SESSION_FILE; exec pi --session "$session"'
+  );
+  assert.deepEqual(environment, [
+    "AGENT_JOURNAL_PARENT_CLIENT=pi",
+    "AGENT_JOURNAL_PARENT_SESSION_ID=parent-123",
+    "AGENT_JOURNAL_CHILD_CLASS=substantial",
+    "PI_CMUX_FORK_SESSION_FILE=/tmp/session with spaces.jsonl"
+  ]);
+  assert.doesNotMatch(command, /session with spaces/);
+});
+
+test("starts a natural-language fork task from an environment value", () => {
+  const task = "Research $(touch /tmp/nope)\nwithout changing the parent";
+  const command = buildDetachedForkCommand({ includeTask: true });
+  const environment = buildDetachedForkEnvironment({
+    sessionFile: "/tmp/fork.jsonl",
+    parentSessionId: "parent-123",
+    task
+  });
+
+  assert.match(command, /^task="\$PI_CMUX_FORK_TASK"/);
+  assert.match(command, /exec pi --session "\$session" "\$task"$/);
+  assert.doesNotMatch(command, /touch/);
+  assert.equal(environment.at(-1), `PI_CMUX_FORK_TASK=${task}`);
+});
+
 test("uses a bounded shell-ready probe that cannot contain task text", () => {
   const command = buildShellReadyCommand("/tmp/pi launch/child.shell-ready");
   assert.equal(command, ": > '/tmp/pi launch/child.shell-ready'");
@@ -114,6 +161,8 @@ test("policy distinguishes lightweight fanout from navigable implementation sess
   assert.match(orchestrationPolicy, /one writer/i);
   assert.match(orchestrationPolicy, /Pi-native.*\/tree.*\/resume/i);
   assert.match(orchestrationPolicy, /isolated worktree/i);
+  assert.match(orchestrationPolicy, /explicitly asks.*\/fork/i);
+  assert.match(orchestrationPolicy, /do not continue.*parent/i);
 });
 
 test("plans an isolated worktree without embedding the task prompt", () => {
@@ -190,5 +239,7 @@ test("supervisor exposes one agents command instead of implementation-detail ali
   assert.doesNotMatch(source, /registerCommand\("(?:child|cmux-children|worktrees|worktree)"/);
   assert.match(source, /PI_CMUX_CHILD_STARTED_PATH/);
   assert.match(source, /session_start/);
+  assert.match(source, /session_before_fork/);
+  assert.match(source, /Type\.Literal\("fork"\)/);
   assert.match(source, /waitForPath/);
 });

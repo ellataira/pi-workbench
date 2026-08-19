@@ -8,6 +8,7 @@ const INTERNAL_REVIEW_SEGMENTS = new Set([
   ".git",
   ".next",
   ".pi",
+  ".pi-subagents",
   "node_modules"
 ]);
 
@@ -153,20 +154,192 @@ export function mergeReviewFileCandidates(
   return fallback.slice(0, limit);
 }
 
-export function restoreReviewFileCandidates(entries, cwd, { limit = 20 } = {}) {
+export function mergeSessionReviewFiles(
+  previousFilePaths,
+  changedFilePaths,
+  cwd,
+  { limit = 100, allowedRoot = cwd } = {}
+) {
   const root = path.resolve(cwd);
+  const allowed = path.resolve(allowedRoot);
+  return uniqueAbsolutePaths(
+    [...(changedFilePaths ?? []), ...(previousFilePaths ?? [])],
+    root
+  ).filter((filePath) => {
+    const relative = path.relative(allowed, filePath);
+    if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+      return false;
+    }
+    const segments = relative.split(path.sep);
+    if (segments.some((segment) => INTERNAL_REVIEW_SEGMENTS.has(segment))) {
+      return false;
+    }
+    return !(segments[0] === ".agents" && segments[1] === "runtime");
+  }).slice(0, Math.max(1, limit));
+}
+
+function sessionDisplayPath(filePath, cwd, home) {
+  const relative = path.relative(path.resolve(cwd), filePath);
+  if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`)) {
+    return relative;
+  }
+  const homeRelative = path.relative(path.resolve(home), filePath);
+  if (homeRelative && homeRelative !== ".." && !homeRelative.startsWith(`..${path.sep}`)) {
+    return `~/${homeRelative}`;
+  }
+  return filePath;
+}
+
+const SESSION_REVIEW_MODES = {
+  recent: {
+    label: "Last Pi turn",
+    title: "Last Pi turn",
+    scope: "Exact changes from the immediately preceding Pi turn"
+  },
+  staged: {
+    label: "Staged",
+    title: "Staged changes",
+    scope: "Git index compared with HEAD"
+  },
+  commit: {
+    label: "Latest commit",
+    title: "Latest commit",
+    scope: "HEAD^..HEAD"
+  },
+  branch: {
+    label: "Branch vs main",
+    title: "Branch vs main",
+    scope: "origin/main...HEAD"
+  }
+};
+
+export function buildSessionReviewTargets({
+  cwd,
+  home,
+  filePaths = [],
+  modes = []
+}) {
+  const targets = [];
+  for (const mode of modes) {
+    const definition = SESSION_REVIEW_MODES[mode?.key];
+    if (!definition || typeof mode?.filePath !== "string" || !mode.filePath) continue;
+    targets.push({
+      filePath: mode.filePath,
+      group: "Review modes",
+      label: `${mode.label ?? definition.label}${
+        mode.unavailable ? " · unavailable" : mode.empty ? " · no changes" : ""
+      }`,
+      display: {
+        title: mode.title ?? definition.title,
+        scope: mode.scope ?? definition.scope
+      }
+    });
+  }
+  uniqueAbsolutePaths(filePaths, cwd).forEach((filePath, index) => {
+    const displayPath = sessionDisplayPath(filePath, cwd, home);
+    const rank = String(index + 1).padStart(2, "0");
+    targets.push({
+      filePath,
+      group: "Session files · newest first",
+      label: `${rank} · ${path.basename(filePath)} — ${displayPath}`,
+      display: {
+        title: path.basename(filePath),
+        scope: index === 0
+          ? `Most recently edited · ${displayPath}`
+          : `Edited #${index + 1} this session · ${displayPath}`
+      }
+    });
+  });
+  return targets;
+}
+
+export function sortSessionReviewFiles(records) {
+  return (Array.isArray(records) ? records : [])
+    .map((record, index) => ({
+      filePath: record?.filePath,
+      mtimeMs: Number(record?.mtimeMs),
+      index
+    }))
+    .filter((record) => typeof record.filePath === "string" && Number.isFinite(record.mtimeMs))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.index - right.index)
+    .map((record) => record.filePath);
+}
+
+export function restoreReviewFileCandidates(entries, cwd, {
+  limit = 20,
+  allowedRoot = cwd
+} = {}) {
+  const root = path.resolve(cwd);
+  const allowed = path.resolve(allowedRoot);
+  const entry = [...(entries ?? [])].reverse().find(
+    (candidate) =>
+      candidate?.type === "custom" &&
+      candidate.customType === REVIEW_SUGGESTIONS_ENTRY
+  );
+  return uniqueAbsolutePaths(entry?.data?.files, entry?.data?.cwd ?? root)
+    .filter((filePath) => {
+      const relative = path.relative(allowed, filePath);
+      return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`);
+    })
+    .slice(0, limit);
+}
+
+export function restoreRecentReviewFileCandidates(entries, cwd, options = {}) {
+  const root = path.resolve(cwd);
+  const allowed = path.resolve(options.allowedRoot ?? cwd);
+  const limit = options.limit ?? 20;
   const entry = [...(entries ?? [])].reverse().find(
     (candidate) =>
       candidate?.type === "custom" &&
       candidate.customType === REVIEW_SUGGESTIONS_ENTRY &&
-      path.resolve(candidate.data?.cwd ?? "") === root
+      Array.isArray(candidate?.data?.recentFiles)
   );
-  return uniqueAbsolutePaths(entry?.data?.files, root)
+  return uniqueAbsolutePaths(entry?.data?.recentFiles, entry?.data?.cwd ?? root)
     .filter((filePath) => {
-      const relative = path.relative(root, filePath);
+      const relative = path.relative(allowed, filePath);
       return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`);
     })
     .slice(0, limit);
+}
+
+export function reviewToolFilePaths(toolName, args = {}) {
+  if (!["edit", "write", "apply_patch"].includes(toolName)) return [];
+  const paths = [];
+  const direct = typeof args.path === "string"
+    ? args.path
+    : typeof args.file_path === "string"
+      ? args.file_path
+      : "";
+  if (direct.trim()) paths.push(direct);
+  if (toolName === "apply_patch" && typeof args.patch === "string") {
+    for (const match of args.patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) {
+      paths.push(match[1]);
+    }
+  }
+  return [...new Set(paths)];
+}
+
+export function restoreRecentToolFileCandidates(entries, cwd, {
+  limit = 100,
+  allowedRoot = cwd
+} = {}) {
+  const branch = Array.isArray(entries) ? entries : [];
+  let filePaths = [];
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index];
+    if (entry?.type === "message" && entry?.message?.role === "user") {
+      if (filePaths.length) break;
+      continue;
+    }
+    if (entry?.type !== "message" || entry?.message?.role !== "assistant") continue;
+    const entryPaths = [];
+    for (const item of Array.isArray(entry.message.content) ? entry.message.content : []) {
+      if (item?.type !== "toolCall") continue;
+      entryPaths.push(...reviewToolFilePaths(item.name, item.arguments));
+    }
+    filePaths = [...entryPaths, ...filePaths];
+  }
+  return mergeSessionReviewFiles([], filePaths, cwd, { limit, allowedRoot });
 }
 
 export function buildReviewSuggestions(filePaths, cwd, {

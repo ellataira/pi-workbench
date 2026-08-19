@@ -26,6 +26,8 @@ const MAX_COMMENT_CHARS = 8_000;
 const MAX_RENDER_BYTES = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const MAX_OPEN_CAPABILITIES = 64;
+const MAX_REVIEW_WORKSPACES = 8;
+const MAX_REVIEW_WORKSPACE_FILES = 100;
 const MAX_BATCH_COMMENTS = 50;
 const MAX_BATCH_DRAFT_CHARS = 16_000;
 
@@ -751,6 +753,22 @@ function reviewPageHtml(state, scriptNonce) {
   const positionOverlaySource = positionAnchoredOverlay.toString();
   const preserveAnchorSource = scrollDeltaToPreserveAnchor.toString();
   const diskUpdateActionSource = reviewDiskUpdateAction.toString();
+  let navigationGroup = "";
+  const navigationHtml = (state.navigation ?? []).map((item) => {
+    const group = item.group || "Session files";
+    const heading = group !== navigationGroup
+      ? `<strong>${escapeHtml(group)}</strong>`
+      : "";
+    navigationGroup = group;
+    const separator = item.label.indexOf(" — ");
+    const content = separator >= 0
+      ? `<span class="nav-name">${escapeHtml(item.label.slice(0, separator))}</span><small>${escapeHtml(item.label.slice(separator + 3))}</small>`
+      : escapeHtml(item.label);
+    const classes = [item.current ? "active" : "", group === "Review modes" ? "mode" : ""]
+      .filter(Boolean)
+      .join(" ");
+    return `${heading}<a href="${escapeHtml(item.url)}" title="${escapeHtml(item.label)}" class="${classes}">${content}</a>`;
+  }).join("");
   return `<!doctype html>
 <html>
 <head>
@@ -764,17 +782,17 @@ function reviewPageHtml(state, scriptNonce) {
 header{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;padding:9px 14px;background:color-mix(in srgb,var(--card) 94%,transparent);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
 .review-identity{margin-right:auto;min-width:0}.review-identity strong,.review-identity small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.review-identity strong{max-width:42vw}.review-identity small{max-width:42vw;color:var(--muted);font-size:11px}
 button{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:6px 10px;cursor:pointer}button.primary{background:var(--accent);color:white;border-color:transparent}button:disabled{opacity:.45}
-main{max-width:1240px;margin:18px auto;padding:0 18px}.comment-box{width:100%;min-height:64px;margin-bottom:12px;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--text)}
+main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14px,2.5vw,36px)}.comment-box{width:100%;min-height:64px;margin-bottom:12px;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--text)}
 #annotations{margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--card);overflow:hidden}#annotations summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;font-weight:650;list-style:none}#annotations summary::-webkit-details-marker{display:none}#annotations summary::before{content:"›";color:var(--muted);font-size:18px;transition:transform .15s}#annotations[open] summary::before{transform:rotate(90deg)}#annotation-list{padding:0 12px 10px}.count{padding:1px 7px;border-radius:999px;background:var(--accent);color:white;font-size:11px}.summary-hint{margin-left:auto;color:var(--muted);font-size:12px;font-weight:400}.empty{color:var(--muted);font-size:12px;padding:4px 0}
 .annotation-card{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,2fr) auto;gap:8px;align-items:start;padding:9px 0;border-top:1px solid var(--border)}.annotation-card:first-child{border-top:0}.annotation-context{color:var(--muted);font-size:12px;overflow-wrap:anywhere}.annotation-edit{width:100%;min-height:54px;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical}.annotation-actions{display:flex;gap:5px}
 #editor{width:100%;min-height:70vh;resize:vertical;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}
-#preview{padding:34px 42px;border:1px solid var(--border);border-radius:9px;background:var(--card);min-height:70vh;line-height:1.65;overflow-wrap:anywhere}#preview>*:first-child{margin-top:0}#preview>*:last-child{margin-bottom:0}#preview h1,#preview h2,#preview h3{line-height:1.25;margin:1.5em 0 .6em}#preview h1,#preview h2{padding-bottom:.28em;border-bottom:1px solid var(--border)}#preview p,#preview ul,#preview ol,#preview blockquote,#preview table,#preview pre{margin:0 0 1em}#preview ul,#preview ol{padding-left:1.7em}#preview li+li{margin-top:.25em}#preview blockquote{margin-left:0;padding:.15em 1em;border-left:4px solid var(--accent);color:var(--muted);background:color-mix(in srgb,var(--accent) 5%,transparent)}#preview table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse}#preview th,#preview td{padding:7px 10px;border:1px solid var(--border)}#preview th{background:var(--bg);font-weight:650}#preview pre{overflow:auto;padding:13px 15px;border-radius:7px;background:var(--bg)}#preview code{padding:.12em .32em;border-radius:4px;background:var(--bg);font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}#preview pre code{padding:0;background:transparent}#preview img{display:block;max-width:100%;height:auto;margin:1em auto;border-radius:6px}#preview hr{margin:2em 0;border:0;border-top:1px solid var(--border)}#preview input[type=checkbox]{margin-right:.45em;accent-color:var(--accent)}#preview a{color:var(--accent);text-underline-offset:2px}.unsafe-link{color:var(--muted);text-decoration:line-through}.annotation{display:inline-flex;gap:5px;align-items:flex-start;justify-content:flex-start;max-width:min(100%,560px);text-align:left;margin:0 3px;padding:1px 6px;border:1px solid var(--annotation-border);border-radius:999px;background:var(--annotation-bg);color:var(--annotation-text);font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;vertical-align:baseline;user-select:none}.annotation:hover,.annotation:focus{outline:2px solid var(--annotation-border);outline-offset:1px}.annotation-label{flex:0 0 auto;color:var(--annotation-border);font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}.annotation-comment{display:block;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left}
+#preview{padding:34px 42px;border:1px solid var(--border);border-radius:9px;background:var(--card);min-height:70vh;line-height:1.65;overflow-wrap:anywhere}#preview>*:first-child{margin-top:0}#preview>*:last-child{margin-bottom:0}#preview h1,#preview h2,#preview h3{line-height:1.25;margin:1.5em 0 .6em}#preview h1,#preview h2{padding-bottom:.28em;border-bottom:1px solid var(--border)}#preview p,#preview ul,#preview ol,#preview blockquote,#preview table,#preview pre{margin:0 0 1em}#preview ul,#preview ol{padding-left:1.7em}#preview li+li{margin-top:.25em}#preview blockquote{margin-left:0;padding:.15em 1em;border-left:4px solid var(--accent);color:var(--muted);background:color-mix(in srgb,var(--accent) 5%,transparent)}#preview table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse}#preview th,#preview td{padding:7px 10px;border:1px solid var(--border)}#preview th{background:var(--bg);font-weight:650}#preview pre{overflow:auto;padding:13px 15px;border-radius:7px;background:var(--bg)}#preview code{padding:.12em .32em;border-radius:4px;background:var(--bg);font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}#preview pre code{padding:0;background:transparent}#preview img{display:block;max-width:100%;height:auto;margin:1em auto;border-radius:6px}#preview hr{margin:2em 0;border:0;border-top:1px solid var(--border)}#preview input[type=checkbox]{margin-right:.45em;accent-color:var(--accent)}#preview a{color:var(--accent);text-underline-offset:2px}.unsafe-link{color:var(--muted);text-decoration:line-through}.annotation{display:inline-flex;gap:5px;align-items:flex-start;justify-content:flex-start;max-width:min(100%,560px);text-align:left;margin:0 3px;padding:1px 6px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;vertical-align:baseline;user-select:none}.annotation:hover,.annotation:focus{outline:2px solid var(--annotation-border);outline-offset:1px}.annotation-label{flex:0 0 auto;color:var(--annotation-border);font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}.annotation-comment{display:block;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left}
 #inline-editor{position:fixed;z-index:20;width:min(420px,calc(100vw - 24px));padding:12px;border:1px solid var(--annotation-border);border-radius:9px;background:var(--annotation-bg);box-shadow:0 12px 38px rgb(0 0 0/.24)}#inline-editor strong{display:block;margin-bottom:7px;color:var(--annotation-text)}.inline-editor-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:8px}#inline-comment-edit{width:100%;min-height:76px;padding:8px;border:1px solid var(--annotation-border);border-radius:6px;background:var(--card);color:var(--text);resize:vertical}
 #selection-action{position:fixed;z-index:18;padding:6px 10px;border:0;border-radius:999px;background:var(--accent);color:white;box-shadow:0 6px 20px rgb(0 0 0/.22);font-weight:650}
-#diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:1px solid var(--annotation-border);border-radius:8px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
+#diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
 .status{color:var(--muted);font-size:12px}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
-.review-tabs{display:flex;gap:6px;overflow:auto;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--card)}.review-tabs a{flex:0 0 auto;padding:4px 9px;border:1px solid var(--border);border-radius:999px;color:var(--text);text-decoration:none;font-size:12px}.review-tabs a.active{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--card));color:var(--accent);font-weight:650}
-@media(max-width:760px){header{flex-wrap:wrap}header strong{max-width:100%;flex:1 0 70%}main{padding:0 10px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
+.review-shell{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);width:100%;align-items:start}.review-sidebar{position:sticky;top:51px;height:calc(100vh - 51px);overflow:auto;padding:14px 10px;border-right:1px solid var(--border);background:var(--card)}.review-sidebar strong{display:block;padding:10px 9px 5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.review-sidebar strong:first-child{padding-top:3px}.review-sidebar a{display:block;margin:2px 0;padding:8px 9px;border-radius:7px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}.review-sidebar a.mode{border:1px solid var(--border);margin-bottom:5px}.review-sidebar a .nav-name{display:block;font-weight:650}.review-sidebar a small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:400}.review-sidebar a:hover{background:var(--bg)}.review-sidebar a.active{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);font-weight:650}.review-sidebar a.active small{color:inherit;opacity:.78}
+@media(max-width:800px){header{flex-wrap:wrap}header .review-identity{flex:1 0 100%}.review-identity strong,.review-identity small{max-width:100%}.review-shell{grid-template-columns:1fr}.review-sidebar{position:sticky;top:91px;z-index:4;display:flex;height:auto;max-height:34vh;gap:5px;overflow:auto;padding:8px;border-right:0;border-bottom:1px solid var(--border)}.review-sidebar strong{position:sticky;left:0;flex:0 0 auto;padding:8px 5px;background:var(--card)}.review-sidebar a{flex:0 0 auto;max-width:240px}main{padding:0 12px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
 </style>
 </head>
 <body>
@@ -792,7 +810,8 @@ main{max-width:1240px;margin:18px auto;padding:0 18px}.comment-box{width:100%;mi
   <button id="save" class="${state.kind === "markdown" ? "" : "hidden"}">Save</button>
   <button id="send" class="primary">Add to Pi</button>
 </header>
-${state.navigation?.length > 1 ? `<nav class="review-tabs" aria-label="Review files">${state.navigation.map((item) => `<a href="${escapeHtml(item.url)}" class="${item.current ? "active" : ""}">${escapeHtml(item.label)}</a>`).join("")}</nav>` : ""}
+<div class="review-shell">
+${state.navigation?.length > 1 ? `<nav id="review-sidebar" class="review-sidebar" aria-label="Session review files">${navigationHtml}</nav>` : ""}
 <main>
   <textarea id="comment" class="comment-box hidden" placeholder="Optional review comment"></textarea>
   <details id="annotations" class="${state.kind === "markdown" ? "" : "hidden"}" ${state.annotations?.length ? "open" : ""}>
@@ -814,6 +833,7 @@ ${state.navigation?.length > 1 ? `<nav class="review-tabs" aria-label="Review fi
   </aside>
   <section id="diff" class="${state.kind === "diff" ? "" : "hidden"}"></section>
 </main>
+</div>
 <script nonce="${scriptNonce}">
 const state=${stateJson};
 const positionAnchoredOverlay=${positionOverlaySource};
@@ -827,6 +847,7 @@ const statusEl=document.getElementById("status");
 const annotationList=document.getElementById("annotation-list");
 const annotationCount=document.getElementById("annotation-count");
 const annotationPanel=document.getElementById("annotations");
+const reviewSidebar=document.getElementById("review-sidebar");
 const sendButton=document.getElementById("send");
 const saveButton=document.getElementById("save");
 const inlineEditor=document.getElementById("inline-editor");
@@ -857,7 +878,7 @@ async function recoverCapability(){
   let response;
   for(let attempt=0;attempt<10;attempt+=1){
     try{
-      response=await fetch("/recover",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourcePath:state.sourcePath,recoveryToken:state.recoveryToken,displayTitle:state.displayTitle,displayScope:state.displayScope})});
+      response=await fetch("/recover",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourcePath:state.sourcePath,recoveryToken:state.recoveryToken,displayTitle:state.displayTitle,displayScope:state.displayScope,workspaceToken:state.workspaceToken,workspaceIndex:state.workspaceIndex})});
       break;
     }catch(error){
       if(attempt===9)throw new Error("Review session changed; run /review once to reopen this file");
@@ -878,6 +899,17 @@ const api=async(action,body={})=>{
   if(response.status===204)return null;
   return response.json();
 };
+function renderWorkspaceNavigation(navigation){
+  if(!reviewSidebar||!Array.isArray(navigation))return;
+  const signature=navigation.map((item)=>(item.group||"")+"|"+item.label+"|"+item.url+"|"+item.current).join("\\n");
+  if(reviewSidebar.dataset.signature===signature)return;
+  reviewSidebar.dataset.signature=signature;reviewSidebar.innerHTML="";
+  let group="";for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading)}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}reviewSidebar.appendChild(link)}
+}
+async function checkWorkspaceNavigation(){
+  if(document.hidden||!reviewSidebar)return;
+  try{const result=await api("navigation");renderWorkspaceNavigation(result.navigation)}catch{}
+}
 const refreshPreview=async()=>{
   setStatus("Rendering…");
   clearRenderedSelection();
@@ -1095,8 +1127,9 @@ document.getElementById("save").onclick=async()=>{
 async function reloadCurrentFile(statusText){
   const scrollTop=window.scrollY;
   const result=await api("reload");
-  editor.value=result.content;savedContent=result.content;state.mtimeMs=result.mtimeMs;annotations=result.annotations;reviewSubmittedContent=null;renderAnnotationTray();reloadFileButton.classList.add("hidden");closeInlineEditor();
-  if(showingPreview)await refreshPreview();
+  state.content=result.content;editor.value=result.content;savedContent=result.content;state.mtimeMs=result.mtimeMs;annotations=result.annotations||[];reviewSubmittedContent=null;reloadFileButton.classList.add("hidden");closeInlineEditor();
+  if(state.kind==="markdown"){renderAnnotationTray();if(showingPreview)await refreshPreview()}
+  else if(state.kind==="diff"){diffLines=parseDiff(result.content);selectedRows=[];renderDiff()}
   window.scrollTo(0,scrollTop);
   setStatus(statusText);
 }
@@ -1107,10 +1140,14 @@ reloadFileButton.onclick=async()=>{
   }catch(error){setStatus("Reload failed: "+error.message)}
 };
 async function checkFileState(){
-  if(document.hidden||state.kind!=="markdown"||checkingFileState)return;
+  if(document.hidden||checkingFileState)return;
   checkingFileState=true;
   try{
     const result=await api("file-state");
+    if(state.kind!=="markdown"){
+      if(result.changed)await reloadCurrentFile("Updated from disk");
+      return;
+    }
     const action=reviewDiskUpdateAction({changed:result.changed,savedContent,editorContent:editor.value,submittedContent:reviewSubmittedContent,annotationCount:annotations.length});
     if(action==="none")return;
     if(action==="reload-submitted"||action==="reload-clean"){
@@ -1123,7 +1160,8 @@ async function checkFileState(){
   finally{checkingFileState=false}
 }
 setInterval(checkFileState,2000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)checkFileState()});
+setInterval(checkWorkspaceNavigation,2000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){checkFileState();checkWorkspaceNavigation()}});
 function parseDiff(source){
   let oldLine=0,newLine=0,filePath="";
   return source.split("\\n").map((text,index)=>{
@@ -1137,7 +1175,7 @@ function parseDiff(source){
     return {index,text,kind,side,line,old,new:newer,filePath};
   });
 }
-const diffLines=state.kind==="diff"?parseDiff(state.content):[];
+let diffLines=state.kind==="diff"?parseDiff(state.content):[];
 function renderDiff(){
   diff.innerHTML="";
   diffLines.forEach((line)=>{
@@ -1209,6 +1247,7 @@ export async function createReviewServer({
     throw new Error("Review server requires a comments path");
   }
   const capabilities = new Map();
+  const workspaces = new Map();
   const bridgeToken = randomBytes(32).toString("hex");
   let commentMutation = Promise.resolve();
 
@@ -1267,31 +1306,77 @@ export async function createReviewServer({
     };
   }
 
-  async function openFiles(filePaths) {
-    const unique = [...new Set(filePaths.map((filePath) => path.resolve(filePath)))].slice(0, 8);
-    if (!unique.length) throw new Error("Review set requires at least one file");
-    const opened = [];
-    for (const filePath of unique) opened.push(await openFile(filePath));
-    const navigation = opened.map((entry) => ({
-      capability: entry.capability,
-      label: path.basename(entry.sourcePath),
-      url: entry.url
+  function workspaceNavigation(token, index) {
+    const items = workspaces.get(token) ?? [];
+    return items.map((candidate, candidateIndex) => ({
+      label: candidate.label,
+      group: candidate.group,
+      url: `${baseUrl}/workspace/${token}/${candidateIndex}`,
+      current: candidateIndex === index
     }));
-    for (const entry of opened) {
-      const state = capabilities.get(entry.capability);
-      state.navigation = navigation.map((item) => ({
-        label: item.label,
-        url: item.url,
-        current: item.capability === entry.capability
-      }));
+  }
+
+  async function openWorkspaceItem(token, index) {
+    const items = workspaces.get(token);
+    if (!items || !Number.isInteger(index) || index < 0 || index >= items.length) {
+      throw new Error("Review workspace item is unavailable");
     }
-    return { ...opened[0], count: opened.length };
+    const item = items[index];
+    const opened = await openFile(item.filePath, item.display);
+    const state = capabilities.get(opened.capability);
+    state.workspaceToken = token;
+    state.workspaceIndex = index;
+    state.navigation = workspaceNavigation(token, index);
+    return { ...opened, count: items.length };
+  }
+
+  async function setWorkspace(filePaths, { workspaceKey = "" } = {}) {
+    const seen = new Set();
+    const items = [];
+    for (const value of filePaths) {
+      const requestedPath = path.resolve(typeof value === "string" ? value : value.filePath);
+      const filePath = (await resolveReviewPath(requestedPath, allowedRoots)).path;
+      if (seen.has(filePath)) continue;
+      seen.add(filePath);
+      const display = typeof value === "string" ? {} : (value.display ?? {});
+      items.push({
+        filePath,
+        display,
+        group: typeof value === "string" ? "" : (value.group || ""),
+        label: typeof value === "string"
+          ? path.basename(filePath)
+          : (value.label || display.title || path.basename(filePath))
+      });
+      if (items.length >= MAX_REVIEW_WORKSPACE_FILES) break;
+    }
+    if (!items.length) throw new Error("Review set requires at least one file");
+    let token = workspaceKey
+      ? createHmac("sha256", recoverySecret)
+        .update(`workspace:${workspaceKey}`)
+        .digest("hex")
+        .slice(0, 36)
+      : "";
+    if (!token) {
+      if (workspaces.size >= MAX_REVIEW_WORKSPACES) {
+        const oldest = workspaces.keys().next().value;
+        workspaces.delete(oldest);
+      }
+      token = randomBytes(18).toString("hex");
+    }
+    workspaces.set(token, items);
+    return { token, count: items.length };
+  }
+
+  async function openFiles(filePaths, options = {}) {
+    const { token } = await setWorkspace(filePaths, options);
+    return openWorkspaceItem(token, 0);
   }
 
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", baseUrl);
       const pageMatch = url.pathname.match(/^\/review\/([a-f0-9]+)$/);
+      const workspaceMatch = url.pathname.match(/^\/workspace\/([a-f0-9]+)\/(\d+)$/);
       const assetMatch = url.pathname.match(/^\/asset\/([a-f0-9]+)$/);
       const apiMatch = url.pathname.match(/^\/api\/([a-f0-9]+)\/([a-z-]+)$/);
 
@@ -1311,6 +1396,19 @@ export async function createReviewServer({
           "x-content-type-options": "nosniff"
         });
         response.end(encoded);
+        return;
+      }
+
+      if (request.method === "GET" && workspaceMatch) {
+        const opened = await openWorkspaceItem(
+          workspaceMatch[1],
+          Number.parseInt(workspaceMatch[2], 10)
+        );
+        response.writeHead(302, {
+          location: opened.url,
+          "cache-control": "no-store"
+        });
+        response.end();
         return;
       }
 
@@ -1364,6 +1462,18 @@ export async function createReviewServer({
           scope: body.displayScope
         });
         const entry = capabilities.get(opened.capability);
+        const workspaceToken = String(body.workspaceToken ?? "");
+        const workspaceItems = /^[a-f0-9]{36}$/.test(workspaceToken)
+          ? workspaces.get(workspaceToken)
+          : undefined;
+        const workspaceIndex = workspaceItems?.findIndex(
+          (item) => item.filePath === sourcePath
+        ) ?? -1;
+        if (workspaceIndex >= 0) {
+          entry.workspaceToken = workspaceToken;
+          entry.workspaceIndex = workspaceIndex;
+          entry.navigation = workspaceNavigation(workspaceToken, workspaceIndex);
+        }
         return sendJson(response, 200, {
           capability: opened.capability,
           mtimeMs: entry.mtimeMs
@@ -1391,6 +1501,17 @@ export async function createReviewServer({
             content: updated.content,
             annotations: parseMarkdownAnnotations(updated.content)
           });
+        }
+
+        if (action === "navigation") {
+          if (!entry.workspaceToken) {
+            return sendJson(response, 200, { navigation: entry.navigation ?? [] });
+          }
+          entry.navigation = workspaceNavigation(
+            entry.workspaceToken,
+            entry.workspaceIndex
+          );
+          return sendJson(response, 200, { navigation: entry.navigation });
         }
 
         if (action === "annotate-selection") {
@@ -1447,7 +1568,6 @@ export async function createReviewServer({
         }
 
         if (action === "file-state") {
-          if (entry.kind !== "markdown") return sendJson(response, 400, { error: "Only Markdown has a disk version" });
           const current = await stat(entry.sourcePath);
           return sendJson(response, 200, {
             changed: current.mtimeMs !== entry.mtimeMs,
@@ -1456,16 +1576,17 @@ export async function createReviewServer({
         }
 
         if (action === "reload") {
-          if (entry.kind !== "markdown") return sendJson(response, 400, { error: "Only Markdown can be reloaded" });
           const current = await stat(entry.sourcePath);
           if (!current.isFile() || current.size > MAX_FILE_BYTES) {
-            return sendJson(response, 413, { error: "Markdown is unavailable or too large" });
+            return sendJson(response, 413, { error: "Review file is unavailable or too large" });
           }
           const content = await readFile(entry.sourcePath, "utf8");
           entry.content = content;
           entry.mtimeMs = current.mtimeMs;
           entry.mode = current.mode & 0o777;
-          entry.annotations = parseMarkdownAnnotations(content);
+          entry.annotations = entry.kind === "markdown"
+            ? parseMarkdownAnnotations(content)
+            : [];
           return sendJson(response, 200, {
             content,
             mtimeMs: entry.mtimeMs,
@@ -1590,6 +1711,7 @@ export async function createReviewServer({
     },
     openFile,
     openFiles,
+    setWorkspace,
     close: () => new Promise((resolve) => {
       capabilities.clear();
       server.close(() => resolve());

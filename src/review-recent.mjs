@@ -220,6 +220,56 @@ export async function captureRecentPath(baseline, filePath) {
   return true;
 }
 
+export async function captureRecentPathInBaselines(baselines, filePath) {
+  if (!(baselines instanceof Map)) {
+    throw new TypeError("Recent review baselines must be a Map");
+  }
+  const requested = path.resolve(filePath);
+  let baseline = [...baselines.values()]
+    .filter((candidate) => relativePath(candidate.root, requested))
+    .sort((left, right) => right.root.length - left.root.length)[0];
+  if (!baseline) {
+    const candidate = await beginRecentTurn(path.dirname(requested));
+    baseline = baselines.get(candidate.root) ?? candidate;
+    if (!baselines.has(candidate.root)) baselines.set(candidate.root, candidate);
+  }
+  await captureRecentPath(baseline, requested);
+  return baseline;
+}
+
+export async function buildRecoveredTargetDiff(filePaths, options = {}) {
+  const bounded = limits(options);
+  let combined = "";
+  for (const candidate of [...new Set(filePaths ?? [])].slice(0, bounded.maxFiles)) {
+    const filePath = path.resolve(candidate);
+    let metadata;
+    try {
+      metadata = await lstat(filePath);
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!metadata.isFile() || metadata.size > bounded.maxFileBytes) continue;
+    let diff = "";
+    try {
+      const result = await execFileAsync(
+        "git",
+        ["--no-pager", "diff", "--no-index", "--", "/dev/null", filePath],
+        { encoding: "utf8", maxBuffer: bounded.maxDiffBytes, timeout: 15_000 }
+      );
+      diff = result.stdout;
+    } catch (error) {
+      if (error?.code !== 1) continue;
+      diff = String(error.stdout ?? "");
+    }
+    if (!diff || Buffer.byteLength(combined) + Buffer.byteLength(diff) > bounded.maxDiffBytes) {
+      continue;
+    }
+    combined += `${combined ? "\n" : ""}${diff}`;
+  }
+  return combined;
+}
+
 async function currentGitCandidates(baseline) {
   const candidates = new Set([
     ...baseline.trackedBefore.keys(),

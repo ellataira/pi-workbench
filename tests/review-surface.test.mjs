@@ -39,10 +39,16 @@ import {
   buildFileReviewChoices,
   buildReviewChooserChoices,
   buildReviewDisplayMetadata,
+  buildSessionReviewTargets,
   buildReviewSuggestions,
+  mergeSessionReviewFiles,
   mergeReviewFileCandidates,
   parseReviewPathArgument,
+  restoreRecentReviewFileCandidates,
+  restoreRecentToolFileCandidates,
+  reviewToolFilePaths,
   restoreReviewFileCandidates,
+  sortSessionReviewFiles,
   REVIEW_SUGGESTIONS_ENTRY
 } from "../src/review-suggestions.mjs";
 
@@ -120,6 +126,18 @@ test("exact commit ranges remain exact instead of becoming base comparisons", ()
     "diff",
     "--no-ext-diff",
     range,
+    "--"
+  ]);
+  assert.deepEqual(buildGitDiffArgs("HEAD^..HEAD"), [
+    "diff",
+    "--no-ext-diff",
+    "HEAD^..HEAD",
+    "--"
+  ]);
+  assert.deepEqual(buildGitDiffArgs("origin/main"), [
+    "diff",
+    "--no-ext-diff",
+    "origin/main...HEAD",
     "--"
   ]);
 });
@@ -213,6 +231,128 @@ test("review file candidates fall back to bounded non-internal Git changes", () 
   );
 });
 
+test("session review files accumulate across turns without internal artifacts", () => {
+  assert.deepEqual(
+    mergeSessionReviewFiles(
+      ["/repo/docs/older.md", "/repo/src/shared.ts"],
+      [
+        "/repo/src/new.ts",
+        "/repo/.pi-subagents/artifacts/output.md",
+        "/repo/node_modules/generated.js",
+        "/repo/src/shared.ts"
+      ],
+      "/repo"
+    ),
+    [
+      "/repo/src/new.ts",
+      "/repo/src/shared.ts",
+      "/repo/docs/older.md"
+    ]
+  );
+});
+
+test("session review targets show explicit modes then session-only files by recency", () => {
+  assert.deepEqual(
+    buildSessionReviewTargets({
+      cwd: "/Users/ella/repo-a",
+      home: "/Users/ella",
+      filePaths: [
+        "/Users/ella/repo-a/docs/plan.md",
+        "/Users/ella/repo-b/docs/plan.md",
+        "/Users/ella/repo-a/README.md"
+      ],
+      modes: [
+        { key: "recent", filePath: "/tmp/recent.diff", empty: false },
+        { key: "staged", filePath: "/tmp/staged.diff", empty: true },
+        { key: "commit", filePath: "/tmp/commit.diff", empty: false },
+        { key: "branch", filePath: "/tmp/branch.diff", empty: false }
+      ]
+    }),
+    [
+      {
+        filePath: "/tmp/recent.diff",
+        group: "Review modes",
+        label: "Last Pi turn",
+        display: { title: "Last Pi turn", scope: "Exact changes from the immediately preceding Pi turn" }
+      },
+      {
+        filePath: "/tmp/staged.diff",
+        group: "Review modes",
+        label: "Staged · no changes",
+        display: { title: "Staged changes", scope: "Git index compared with HEAD" }
+      },
+      {
+        filePath: "/tmp/commit.diff",
+        group: "Review modes",
+        label: "Latest commit",
+        display: { title: "Latest commit", scope: "HEAD^..HEAD" }
+      },
+      {
+        filePath: "/tmp/branch.diff",
+        group: "Review modes",
+        label: "Branch vs main",
+        display: { title: "Branch vs main", scope: "origin/main...HEAD" }
+      },
+      {
+        filePath: "/Users/ella/repo-a/docs/plan.md",
+        group: "Session files · newest first",
+        label: "01 · plan.md — docs/plan.md",
+        display: { title: "plan.md", scope: "Most recently edited · docs/plan.md" }
+      },
+      {
+        filePath: "/Users/ella/repo-b/docs/plan.md",
+        group: "Session files · newest first",
+        label: "02 · plan.md — ~/repo-b/docs/plan.md",
+        display: { title: "plan.md", scope: "Edited #2 this session · ~/repo-b/docs/plan.md" }
+      },
+      {
+        filePath: "/Users/ella/repo-a/README.md",
+        group: "Session files · newest first",
+        label: "03 · README.md — README.md",
+        display: { title: "README.md", scope: "Edited #3 this session · README.md" }
+      }
+    ]
+  );
+});
+
+test("session review file recency uses modification time with stable ties", () => {
+  assert.deepEqual(
+    sortSessionReviewFiles([
+      { filePath: "/repo/older.md", mtimeMs: 10 },
+      { filePath: "/repo/new-a.md", mtimeMs: 30 },
+      { filePath: "/repo/new-b.md", mtimeMs: 30 },
+      { filePath: "/repo/middle.md", mtimeMs: 20 }
+    ]),
+    [
+      "/repo/new-a.md",
+      "/repo/new-b.md",
+      "/repo/middle.md",
+      "/repo/older.md"
+    ]
+  );
+});
+
+test("session review does not backfill its file list from repository Git status", async () => {
+  const source = await readFile(
+    new URL("../extensions/pi-review-surface.ts", import.meta.url),
+    "utf8"
+  );
+  const body = source.match(/async function openSessionReview[\s\S]*?\n\t}/)?.[0] ?? "";
+  assert.doesNotMatch(body, /reviewFileCandidates/);
+});
+
+test("session review files can span repositories inside one approved root", () => {
+  assert.deepEqual(
+    mergeSessionReviewFiles(
+      ["/Users/ella/repo-a/docs/a.md"],
+      ["/Users/ella/repo-b/src/b.ts", "/private/outside.txt"],
+      "/Users/ella/repo-b",
+      { allowedRoot: "/Users/ella" }
+    ),
+    ["/Users/ella/repo-b/src/b.ts", "/Users/ella/repo-a/docs/a.md"]
+  );
+});
+
 test("last-turn review suggestions survive extension reload for the same workspace", () => {
   assert.deepEqual(
     restoreReviewFileCandidates(
@@ -242,6 +382,62 @@ test("last-turn review suggestions survive extension reload for the same workspa
     ),
     ["/repo/docs/current.md", "/repo/src/current.ts"]
   );
+});
+
+test("latest targeted files remain distinct from cumulative session history", () => {
+  assert.deepEqual(
+    restoreRecentReviewFileCandidates([
+      {
+        type: "custom",
+        customType: REVIEW_SUGGESTIONS_ENTRY,
+        data: {
+          cwd: "/repo",
+          files: ["/repo/old.md", "/repo/latest.md"],
+          recentFiles: ["/repo/latest.md"]
+        }
+      }
+    ], "/repo"),
+    ["/repo/latest.md"]
+  );
+});
+
+test("legacy sessions recover only latest-turn tool paths across repositories", () => {
+  const entries = [
+    { type: "message", message: { role: "user", content: "old request" } },
+    { type: "message", message: { role: "assistant", content: [
+      { type: "toolCall", name: "edit", arguments: { path: "/Users/ella/old.md" } }
+    ] } },
+    { type: "message", message: { role: "user", content: "latest request" } },
+    { type: "message", message: { role: "assistant", content: [
+      { type: "toolCall", name: "edit", arguments: { path: "/Users/ella/episode/a.yaml" } },
+      { type: "toolCall", name: "write", arguments: { path: "/Users/ella/episode/b.md" } }
+    ] } },
+    { type: "message", message: { role: "user", content: "open review" } },
+    { type: "message", message: { role: "assistant", content: "review opened" } }
+  ];
+  assert.deepEqual(
+    restoreRecentToolFileCandidates(entries, "/Users/ella/repo", {
+      allowedRoot: "/Users/ella"
+    }),
+    ["/Users/ella/episode/a.yaml", "/Users/ella/episode/b.md"]
+  );
+});
+
+test("review tool paths include every file in an apply_patch call", () => {
+  assert.deepEqual(
+    reviewToolFilePaths("apply_patch", {
+      patch: [
+        "*** Begin Patch",
+        "*** Update File: docs/one.md",
+        "*** Add File: /Users/ella/episode/two.yaml",
+        "*** Delete File: old/three.txt",
+        "*** End Patch"
+      ].join("\n")
+    }),
+    ["docs/one.md", "/Users/ella/episode/two.yaml", "old/three.txt"]
+  );
+  assert.deepEqual(reviewToolFilePaths("edit", { path: "src/one.ts" }), ["src/one.ts"]);
+  assert.deepEqual(reviewToolFilePaths("read", { path: "src/one.ts" }), []);
 });
 
 test("review suggestions are relative, quoted, unique, and bounded", () => {
@@ -674,13 +870,15 @@ test("review session routing prefers the exact cmux workspace then the longest c
   );
 });
 
-test("one review URL navigates across a bounded file set", async (t) => {
+test("one review workspace navigates a large session file set from a sidebar", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "pi-review-set-"));
-  const firstPath = path.join(root, "values.yaml");
-  const secondPath = path.join(root, "plan.md");
   const commentsPath = path.join(root, "comments.json");
-  await writeFile(firstPath, "enabled: true\n", "utf8");
-  await writeFile(secondPath, "# Plan\n", "utf8");
+  const filePaths = Array.from({ length: 12 }, (_, index) =>
+    path.join(root, index === 0 ? "values.yaml" : `file-${index}.md`)
+  );
+  await Promise.all(filePaths.map((filePath, index) =>
+    writeFile(filePath, index === 0 ? "enabled: true\n" : `# File ${index}\n`, "utf8")
+  ));
   const service = await createReviewServer({
     allowedRoots: [root],
     commentsPath,
@@ -688,12 +886,81 @@ test("one review URL navigates across a bounded file set", async (t) => {
   });
   t.after(() => service.close());
 
-  const opened = await service.openFiles([firstPath, secondPath]);
-  assert.equal(opened.count, 2);
+  const opened = await service.openFiles(filePaths.map((filePath, index) => ({
+    filePath,
+    group: index < 2 ? "Latest changes" : "Session history",
+    label: index === 0 ? "01 · values.yaml — charts/values.yaml" : undefined
+  })));
+  assert.equal(opened.count, 12);
   const html = await (await fetch(opened.url)).text();
-  assert.match(html, /class="review-tabs"/);
-  assert.match(html, />values\.yaml<\/a>/);
-  assert.match(html, />plan\.md<\/a>/);
+  assert.match(html, /class="review-sidebar"/);
+  assert.match(html, /Latest changes/);
+  assert.match(html, /Session history/);
+  assert.match(html, /@media\(max-width:800px\)/);
+  assert.match(html, /class="nav-name">01 · values\.yaml<\/span><small>charts\/values\.yaml<\/small>/);
+  assert.match(html, />file-11\.md<\/a>/);
+});
+
+test("an open session workspace exposes newly edited files without reopening", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-live-set-"));
+  const paths = ["first.md", "second.md", "third.md"].map((name) => path.join(root, name));
+  await Promise.all(paths.map((filePath) => writeFile(filePath, `# ${path.basename(filePath)}\n`, "utf8")));
+  const service = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath: path.join(root, "comments.json"),
+    onAppendDraft: async () => {}
+  });
+  t.after(() => service.close());
+  const opened = await service.openFiles(paths.slice(0, 2), { workspaceKey: "live" });
+  await service.setWorkspace(paths, { workspaceKey: "live" });
+  const response = await fetch(`${service.baseUrl}/api/${opened.capability}/navigation`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}"
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    (await response.json()).navigation.map((item) => item.label),
+    ["first.md", "second.md", "third.md"]
+  );
+});
+
+test("a clean diff view reloads when its generated session diff changes", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-live-diff-"));
+  const diffPath = path.join(root, "session.diff");
+  await writeFile(diffPath, "--- a/a.md\n+++ b/a.md\n@@ -1 +1 @@\n-old\n+new\n", "utf8");
+  const service = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath: path.join(root, "comments.json"),
+    onAppendDraft: async () => {}
+  });
+  t.after(() => service.close());
+  const opened = await service.openFile(diffPath);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await writeFile(diffPath, "--- a/a.md\n+++ b/a.md\n@@ -1 +1 @@\n-old\n+newer\n", "utf8");
+  const stateResponse = await fetch(`${service.baseUrl}/api/${opened.capability}/file-state`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}"
+  });
+  assert.equal((await stateResponse.json()).changed, true);
+  const reloadResponse = await fetch(`${service.baseUrl}/api/${opened.capability}/reload`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: "{}"
+  });
+  assert.match((await reloadResponse.json()).content, /\+newer/);
+});
+
+test("review command defaults to the cumulative session workspace and reuses a cmux popout", async () => {
+  const source = await readFile(
+    new URL("../extensions/pi-review-surface.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /openSessionReview\(ctx\)/);
+  assert.match(source, /mergeSessionReviewFiles\(/);
+  assert.match(source, /cmux", \["--json", "new-window"\]/);
+  assert.match(source, /browser", "--surface", reviewSurfaceId, "navigate"/);
+  assert.match(source, /recentFiles:/);
+  assert.match(source, /buildSessionReviewTargets: buildSessionTargetList/);
+  assert.match(source, /"HEAD\^\.\.HEAD"/);
+  assert.match(source, /"origin\/main"/);
 });
 
 test("loopback review service saves markdown atomically and keeps draft text transient", async (t) => {
@@ -734,8 +1001,13 @@ test("loopback review service saves markdown atomically and keeps draft text tra
   assert.match(pageHtml, /--annotation-bg:#fff0f7/);
   assert.match(pageHtml, /\.annotation\{[^}]*font:500 12px/);
   assert.match(pageHtml, /\.annotation\{[^}]*text-align:left/);
+  assert.match(pageHtml, /\.annotation\{[^}]*border-left:3px solid var\(--annotation-border\)/);
+  assert.match(pageHtml, /\.annotation\{[^}]*border-radius:3px/);
+  assert.doesNotMatch(pageHtml, /\.annotation\{[^}]*border-radius:999px/);
   assert.match(pageHtml, /\.annotation-comment\{[^}]*text-align:left/);
   assert.match(pageHtml, /\.inline-comment\{[^}]*text-align:left/);
+  assert.match(pageHtml, /\.inline-comment\{[^}]*border-left:3px solid var\(--annotation-border\)/);
+  assert.match(pageHtml, /\.inline-comment\{[^}]*border-radius:3px/);
   assert.match(pageHtml, /actionSelection=renderedSelection/);
   assert.match(pageHtml, /rangeTextWithoutAnnotations/);
   assert.match(pageHtml, /const text=rangeTextWithoutAnnotations\(range\)\.trim\(\)/);
@@ -861,6 +1133,63 @@ test("an open review page can recover its capability after the loopback server r
   assert.equal(saveResponse.status, 200);
   assert.equal(await readFile(markdownPath, "utf8"), "# Recovered and saved\n");
   assert.match(pageHtml, /recoverCapability/);
+});
+
+test("a recovered review page regains its cumulative session sidebar", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-workspace-reload-"));
+  const firstPath = path.join(root, "first.md");
+  const secondPath = path.join(root, "second.md");
+  const commentsPath = path.join(root, "comments.json");
+  await writeFile(firstPath, "# First\n", "utf8");
+  await writeFile(secondPath, "# Second\n", "utf8");
+
+  const first = await createReviewServer({
+    allowedRoots: [root], commentsPath, onAppendDraft: async () => {}
+  });
+  t.after(() => first.close());
+  const opened = await first.openFiles([firstPath, secondPath], {
+    workspaceKey: "session-1"
+  });
+  const pageHtml = await (await fetch(opened.url)).text();
+  const recoveryToken = pageHtml.match(/"recoveryToken":"([a-f0-9]+)"/)?.[1];
+  const workspaceToken = pageHtml.match(/"workspaceToken":"([a-f0-9]+)"/)?.[1];
+  const sourcePath = pageHtml.match(/"sourcePath":"([^"]+)"/)?.[1];
+  const recovery = first.recoveryState;
+  assert.ok(recoveryToken);
+  assert.ok(workspaceToken);
+  assert.ok(sourcePath);
+  await first.close();
+
+  const second = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath,
+    onAppendDraft: async () => {},
+    port: recovery.port,
+    recoverySecret: recovery.secret
+  });
+  t.after(() => second.close());
+  await second.setWorkspace([firstPath, secondPath], { workspaceKey: "session-1" });
+  const response = await fetch(`${second.baseUrl}/recover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sourcePath,
+      recoveryToken,
+      workspaceToken,
+      workspaceIndex: 0
+    })
+  });
+  assert.equal(response.status, 200);
+  const recovered = await response.json();
+  const navigation = await fetch(
+    `${second.baseUrl}/api/${recovered.capability}/navigation`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }
+  );
+  assert.equal(navigation.status, 200);
+  assert.deepEqual(
+    (await navigation.json()).navigation.map((item) => item.label),
+    ["first.md", "second.md"]
+  );
 });
 
 test("loopback review service rejects paths outside its roots and stale saves", async (t) => {
@@ -1214,18 +1543,21 @@ test("registers and documents the review surface without doc-copy drift", async 
   assert.doesNotMatch(extension, /registerCommand\("review-(?:recent|last|diff)"/);
   assert.match(extension, /What would you like to review\?/);
   assert.match(extension, /Which complete file do you want to review\?/);
-  assert.match(extension, /Review ready — run \/review/);
+  assert.match(extension, /Session review ready — run \/review/);
   assert.match(extension, /importFreshSourceModule/);
   assert.match(extension, /review-suggestions\.mjs/);
+  assert.match(extension, /appendEntry\("pi-review-open-metrics"/);
   assert.doesNotMatch(
     extension,
     /from "\.\.\/src\/review-suggestions\.mjs"/
   );
   assert.doesNotMatch(extension, /review-surface\.mjs\?reload=/);
   assert.match(readme, /`\/review` is the single review entry point/);
-  assert.match(quickstart, /Running `\/review` with no argument opens a contextual chooser/);
-  assert.match(quickstart, /Changes from last Pi turn/);
-  assert.match(quickstart, /Open a complete file/);
+  assert.match(quickstart, /Running `\/review` with no argument opens the cumulative session review workspace/);
+  assert.match(quickstart, /\*\*Review modes\*\*/);
+  assert.match(quickstart, /`HEAD\^\.\.HEAD`/);
+  assert.match(quickstart, /`origin\/main\.\.\.HEAD`/);
+  assert.match(quickstart, /file sidebar/);
   assert.match(quickstart, /Add to Pi/);
   assert.match(quickstart, /not the selected diff text/i);
   assert.equal(publicReadme, readme);

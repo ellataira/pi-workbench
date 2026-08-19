@@ -39,6 +39,24 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("rename", {
+		description: "Rename the current Pi session",
+		handler: async (args, ctx) => {
+			const name = String(args ?? "").trim();
+			if (!name) {
+				const current = pi.getSessionName();
+				ctx.ui.notify(
+					current ? `Current session name: ${current}` : "Usage: /rename <name>",
+					current ? "info" : "warning",
+				);
+				return;
+			}
+			pi.setSessionName(name);
+			const normalized = pi.getSessionName() ?? name;
+			ctx.ui.notify(`Session renamed: ${normalized}`, "info");
+		},
+	});
+
 	pi.registerCommand("copy-command", {
 		description: "Copy a CLI command from the latest Pi response",
 		handler: async (_args, ctx) => {
