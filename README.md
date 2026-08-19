@@ -105,6 +105,11 @@ Inside Pi:
   focused cmux tab; truncated session paths never need to be copied manually.
 - `/rename <name>` renames the active session using Pi's native session-name
   metadata. `/rename` without an argument reports the current name.
+- `/rewind` lists recent user messages and resumes from the selected point while
+  preserving the abandoned conversation branch. It does not roll back files.
+- `/copy` opens a picker for individual commands, complete multiline shell
+  scripts, or the entire latest response. `/copy-command` is the vendor-neutral
+  fallback when the runtime reserves `/copy`.
 - `/pair start` creates a terminal split to the right and labels it **Pi Pair
   Terminal**. It keeps your normal terminal colors stable instead of changing
   the background while commands run. An isolated owner-only zsh profile loads
