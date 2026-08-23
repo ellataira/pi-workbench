@@ -18,6 +18,13 @@ Third-party Pi packages provide MCP, background subagents, context compression,
 markdown preview, structured questions, Datadog access, and the powerline.
 Trajectory captures local session telemetry.
 
+`pi-subagents@0.52.1` is pinned as a workbench dependency rather than installed
+as a second standalone Pi package. Installation fails closed if its artifact
+defaults drift: raw child input, transcripts, and metadata are disabled while
+bounded output remains available. Built-in child roles also disable ambient
+extension discovery so their child-only runtime cannot collide with the parent
+subagent extension.
+
 ## Install or restore
 
 Clone the private repository, install its pinned JavaScript dependencies, run
@@ -91,6 +98,19 @@ Inside Pi:
   merged. `/agents recover`, `/agents patch`, and `/agents cleanup`
   recover the session, produce a bounded reviewable patch, or remove only a
   clean merged child.
+- Persistent implementations remain visible in the parent through a live
+  **Agent map** widget. It names the child, branch, current lifecycle phase
+  or tool, last heartbeat, and a redacted three-line tail from the child's cmux
+  screen. The newest child is followed automatically; `/agents watch <name>`
+  switches the inline tail and `/agents watch off` hides it. Use `/agents status
+  [name]` for metadata on demand. `/agents focus <name>` is optional and only
+  needed for direct steering or full scrollback. The live tail is UI-only and is
+  never written to the parent session, journal, progress files, or transcripts.
+- A child tab identifies itself and keeps `Return to supervisor · /agents
+  parent` on screen. The parent map shows `open` and `follow` commands beside
+  every child, so navigation does not depend on remembering cmux tabs.
+- Supervisor helper modules are loaded from fresh source during `/reload`, so a
+  running Pi cannot retain an older helper export set after an extension update.
 - Ask the parent to focus, message, or interrupt a named child; it uses the
   `cmux_session` tool, which rejects unknown workspaces.
 - `/fork` selects an earlier user message, creates an independent session at
@@ -105,6 +125,9 @@ Inside Pi:
   focused cmux tab; truncated session paths never need to be copied manually.
 - `/rename <name>` renames the active session using Pi's native session-name
   metadata. `/rename` without an argument reports the current name.
+- `/end` confirms the exact active session, permanently deletes only its native
+  session history file, and exits Pi. It does not remove project files,
+  worktrees, journal memories, or other sessions.
 - `/rewind` lists recent user messages and resumes from the selected point while
   preserving the abandoned conversation branch. It does not roll back files.
 - `/copy` opens a picker for individual commands, complete multiline shell
@@ -381,8 +404,12 @@ npm run build:pet
   to review files or a diff, Pi opens it directly instead of returning paths
   and asking you to type `/review`. Bare `/review` opens one dedicated cmux
   popout for the session and later calls reuse that window. Its left sidebar
-  accumulates up to 100 files from that session only; file contents load only
-  when selected. If `/workspace` visits more than one repository, the sidebar
+  keeps the review modes visible, recommends at most five files from the last
+  Pi turn under **Review now**, and collapses the remaining session-only files
+  under **Earlier this session**. The combined **Last Pi turn** diff opens first,
+  so the intended starting point is explicit. The workspace still retains up to
+  100 session files, but file contents load only when selected. If `/workspace`
+  visits more than one repository, the sidebar
   keeps the session files together with unambiguous paths. Git review may name a different repository
   directory, so an exact range can open without changing the active Pi workspace.
 - The advanced `/review choose` menu retains **Changes from last Pi turn**, which opens one combined diff containing
@@ -394,8 +421,11 @@ npm run build:pet
   files are supported. Internal `.pi-subagents` artifacts, nested Claude
   worktrees, runtime state, build output, and dependencies are filtered before
   snapshot limits and never create skipped-file warnings.
-- After a changed turn, Pi shows **Session review ready — run /review** and the
-  cumulative edited-file count. If the popout is already open, its file sidebar
+- After a changed turn, Pi shows **Session review ready — run /review**, the
+  current reviewable-file count, and a separate skipped count for unavailable,
+  oversized, or unsupported session entries. Invalid entries are excluded
+  before the workspace is opened, so one bad path cannot reject the valid files
+  or Git modes. If the popout is already open, its file sidebar
   updates in place and re-sorts files by modification time; clean file and diff views follow disk updates without
   stealing focus. A no-change turn clears only the previous-turn diff instead
   of silently retaining stale work.

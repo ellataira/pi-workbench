@@ -6,8 +6,31 @@ import {
   buildCopyChoices,
   buildRewindChoices,
   extractCliCommands,
-  latestAssistantText
+  latestAssistantText,
+  resolveSessionDeletionTarget
 } from "../src/session-utilities.mjs";
+
+test("session deletion accepts only a native JSONL directly inside the session directory", () => {
+  assert.equal(
+    resolveSessionDeletionTarget(
+      "/Users/test/.pi/agent/sessions/project/2026-08-21_session-id.jsonl",
+      "/Users/test/.pi/agent/sessions/project"
+    ),
+    "/Users/test/.pi/agent/sessions/project/2026-08-21_session-id.jsonl"
+  );
+});
+
+test("session deletion rejects missing, non-JSONL, nested, and outside targets", () => {
+  for (const [sessionFile, sessionDir] of [
+    [undefined, "/Users/test/.pi/agent/sessions/project"],
+    ["/Users/test/.pi/agent/sessions/project/session.txt", "/Users/test/.pi/agent/sessions/project"],
+    ["/Users/test/.pi/agent/sessions/project/nested/session.jsonl", "/Users/test/.pi/agent/sessions/project"],
+    ["/Users/test/.pi/agent/sessions/other/session.jsonl", "/Users/test/.pi/agent/sessions/project"],
+    ["/Users/test/.pi/agent/sessions/project/session.jsonl", undefined]
+  ]) {
+    assert.equal(resolveSessionDeletionTarget(sessionFile, sessionDir), undefined);
+  }
+});
 
 test("rewind choices let the user resume after any recent user message", () => {
   const entries = [
@@ -183,7 +206,7 @@ test("copy reads only the latest assistant prose from the active branch", () => 
   );
 });
 
-test("session utilities register rewind, rename, and a non-conflicting command picker", async () => {
+test("session utilities register rewind, rename, end, and a non-conflicting command picker", async () => {
   const source = await readFile(
     new URL("../extensions/pi-session-utilities.ts", import.meta.url),
     "utf8"
@@ -197,4 +220,8 @@ test("session utilities register rewind, rename, and a non-conflicting command p
   assert.match(source, /registerCommand\("rename"/);
   assert.match(source, /pi\.setSessionName\(name\)/);
   assert.match(source, /pi\.getSessionName\(\)/);
+  assert.match(source, /registerCommand\("end"/);
+  assert.match(source, /ctx\.ui\.confirm\(/);
+  assert.match(source, /unlink\(target\)/);
+  assert.match(source, /ctx\.shutdown\(\)/);
 });

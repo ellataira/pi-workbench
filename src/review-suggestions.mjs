@@ -217,6 +217,8 @@ export function buildSessionReviewTargets({
   cwd,
   home,
   filePaths = [],
+  recentFilePaths = [],
+  reviewNowLimit = 5,
   modes = []
 }) {
   const targets = [];
@@ -235,17 +237,35 @@ export function buildSessionReviewTargets({
       }
     });
   }
-  uniqueAbsolutePaths(filePaths, cwd).forEach((filePath, index) => {
+  const files = uniqueAbsolutePaths(filePaths, cwd);
+  const recentSet = new Set(uniqueAbsolutePaths(recentFilePaths, cwd));
+  let reviewNow = files
+    .filter((filePath) => recentSet.has(filePath))
+    .slice(0, Math.max(1, reviewNowLimit));
+  const hasRecentFiles = reviewNow.length > 0;
+  if (!reviewNow.length && files.length) reviewNow = files.slice(0, 1);
+  const reviewNowSet = new Set(reviewNow);
+  const orderedFiles = [
+    ...reviewNow,
+    ...files.filter((filePath) => !reviewNowSet.has(filePath))
+  ];
+  const earlierCount = orderedFiles.length - reviewNow.length;
+  orderedFiles.forEach((filePath, index) => {
     const displayPath = sessionDisplayPath(filePath, cwd, home);
     const rank = String(index + 1).padStart(2, "0");
+    const isReviewNow = reviewNowSet.has(filePath);
     targets.push({
       filePath,
-      group: "Session files · newest first",
+      group: isReviewNow
+        ? `Review now · ${hasRecentFiles ? "last Pi turn" : "latest edited"}`
+        : `Earlier this session · ${earlierCount} ${earlierCount === 1 ? "file" : "files"}`,
       label: `${rank} · ${path.basename(filePath)} — ${displayPath}`,
       display: {
         title: path.basename(filePath),
-        scope: index === 0
-          ? `Most recently edited · ${displayPath}`
+        scope: isReviewNow && hasRecentFiles
+          ? `Edited last Pi turn · ${displayPath}`
+          : index === 0
+            ? `Most recently edited · ${displayPath}`
           : `Edited #${index + 1} this session · ${displayPath}`
       }
     });
@@ -263,6 +283,20 @@ export function sortSessionReviewFiles(records) {
     .filter((record) => typeof record.filePath === "string" && Number.isFinite(record.mtimeMs))
     .sort((left, right) => right.mtimeMs - left.mtimeMs || left.index - right.index)
     .map((record) => record.filePath);
+}
+
+export function filterReviewableSessionFileRecords(
+  records,
+  { maxBytes = 5 * 1024 * 1024 } = {}
+) {
+  return (Array.isArray(records) ? records : []).filter((record) =>
+    record?.isFile === true &&
+    typeof record.filePath === "string" &&
+    Boolean(record.kind) &&
+    Number.isFinite(record.size) &&
+    record.size >= 0 &&
+    record.size <= maxBytes
+  );
 }
 
 export function restoreReviewFileCandidates(entries, cwd, {

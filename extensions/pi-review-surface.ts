@@ -29,7 +29,9 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	);
 	const {
 		appendReviewDraft,
+		classifyReviewFile,
 		createReviewServer,
+		MAX_REVIEW_FILE_BYTES,
 	} = await importFreshSourceModule(reviewSurfacePath, {
 		imports: {
 			marked: require.resolve("marked"),
@@ -61,6 +63,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		buildReviewChooserChoices,
 		buildReviewDisplayMetadata,
 		buildSessionReviewTargets: buildSessionTargetList,
+		filterReviewableSessionFileRecords,
 		mergeSessionReviewFiles,
 		parseReviewPathArgument,
 		restoreReviewFileCandidates,
@@ -345,17 +348,49 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	async function buildSessionReviewTargets(ctx: any) {
-		const currentFileRecords: Array<{ filePath: string; mtimeMs: number }> = [];
-		for (const filePath of sessionChangedFiles) {
+	async function inspectSessionReviewFiles(filePaths = sessionChangedFiles) {
+		const records: Array<{
+			filePath: string;
+			mtimeMs: number;
+			size: number;
+			kind: string | null;
+			isFile: boolean;
+		}> = [];
+		for (const filePath of filePaths) {
 			try {
 				const info = await stat(filePath);
-				if (info.isFile()) currentFileRecords.push({ filePath, mtimeMs: info.mtimeMs });
+				records.push({
+					filePath,
+					mtimeMs: info.mtimeMs,
+					size: info.size,
+					kind: classifyReviewFile(filePath),
+					isFile: info.isFile(),
+				});
 			} catch (error: any) {
 				if (error?.code !== "ENOENT") throw error;
 			}
 		}
-		const currentFiles = sortSessionReviewFiles(currentFileRecords);
+		const reviewable = filterReviewableSessionFileRecords(records, {
+			maxBytes: MAX_REVIEW_FILE_BYTES,
+		});
+		return {
+			currentFiles: sortSessionReviewFiles(reviewable),
+			skippedCount: filePaths.length - reviewable.length,
+		};
+	}
+
+	function reviewWidgetLines(reviewableCount: number, skippedCount: number) {
+		return [
+			"Session review ready — run /review",
+			`${reviewableCount} reviewable file${reviewableCount === 1 ? "" : "s"}${
+				skippedCount ? ` · ${skippedCount} unavailable, oversized, or unsupported skipped` : ""
+			}`,
+		];
+	}
+
+	async function buildSessionReviewTargets(ctx: any) {
+		const fileStatus = await inspectSessionReviewFiles();
+		const recentFileStatus = await inspectSessionReviewFiles(recentChangedFiles);
 		const recentMode = recentDiffPath
 			? {
 				key: "recent",
@@ -396,25 +431,32 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 				"The branch diff against origin/main is unavailable.",
 			),
 		]);
-		return buildSessionTargetList({
+		const targets = buildSessionTargetList({
 			cwd: ctx.cwd,
 			home: homedir(),
-			filePaths: currentFiles,
+			filePaths: fileStatus.currentFiles,
+			recentFilePaths: recentFileStatus.currentFiles,
 			modes: [recentMode, ...gitModes],
 		});
+		return { targets, ...fileStatus };
 	}
 
 	async function openSessionReview(ctx: any) {
 		latestContext = ctx;
 		await refreshSessionChanges(ctx);
-		const targets = await buildSessionReviewTargets(ctx);
+		const { targets, currentFiles, skippedCount } = await buildSessionReviewTargets(ctx);
 		if (!targets.length) {
 			ctx.ui.notify("This session has no reviewable file changes yet.", "info");
 			return [];
 		}
 		await reviewFiles(targets, ctx, { workspaceKey: sessionId });
 		recordReviewOpen("session");
-		ctx.ui.notify(`Opened session review workspace · ${sessionChangedFiles.length} files`, "info");
+		ctx.ui.notify(
+			`Opened session review workspace · ${currentFiles.length} reviewable file${currentFiles.length === 1 ? "" : "s"}${
+				skippedCount ? ` · ${skippedCount} skipped` : ""
+			}`,
+			"info",
+		);
 		return targets.map((target) => target.filePath);
 	}
 
@@ -482,9 +524,10 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	}
 
 	async function reviewFileCandidates(ctx: any) {
+		const { currentFiles } = await inspectSessionReviewFiles();
 		return mergeSessionReviewFiles(
 			[],
-			sessionChangedFiles,
+			currentFiles,
 			ctx.cwd,
 			{ limit: 20, allowedRoot: homedir() },
 		);
@@ -661,17 +704,13 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		reviewWindowId = recoveryState?.reviewWindowId ?? "";
 		reviewSurfaceId = recoveryState?.reviewSurfaceId ?? "";
 		if (sessionChangedFiles.length) {
-			const restoredChoice = buildReviewChooserChoices({
-				changedFilePaths: sessionChangedFiles,
-				cwd: ctx.cwd,
-				hasRecentDiff: false,
-			})[0];
+			const restoredStatus = await inspectSessionReviewFiles();
 			ctx.ui.setWidget(
 				"review-suggestions",
-				[
-					"Session review ready — run /review",
-					`${sessionChangedFiles.length} edited file${sessionChangedFiles.length === 1 ? "" : "s"}`,
-				],
+				reviewWidgetLines(
+					restoredStatus.currentFiles.length,
+					restoredStatus.skippedCount,
+				),
 				{ placement: "belowEditor" },
 			);
 		}
@@ -695,7 +734,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			reviewRecoveryStates.set(sessionId, service.recoveryState);
 			rememberReviewWindow();
 			if (sessionChangedFiles.length) {
-				const restoredTargets = await buildSessionReviewTargets(ctx);
+				const { targets: restoredTargets } = await buildSessionReviewTargets(ctx);
 				if (restoredTargets.length) {
 					await service.setWorkspace(restoredTargets, { workspaceKey: sessionId });
 				}
@@ -785,17 +824,13 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			updatedAt: new Date().toISOString(),
 		});
 		if (recentDiffPath) {
-			const recentChoice = buildReviewChooserChoices({
-				changedFilePaths: recentChangedFiles,
-				cwd: ctx.cwd,
-				hasRecentDiff: true,
-			})[0];
+			const settledStatus = await inspectSessionReviewFiles();
 			ctx.ui.setWidget(
 				"review-suggestions",
-				[
-					"Session review ready — run /review",
-					`${sessionChangedFiles.length} edited file${sessionChangedFiles.length === 1 ? "" : "s"}`,
-				],
+				reviewWidgetLines(
+					settledStatus.currentFiles.length,
+					settledStatus.skippedCount,
+				),
 				{ placement: "belowEditor" },
 			);
 			ctx.ui.notify("Session review ready — run /review", "info");
@@ -809,7 +844,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		if (reviewSurfaceId && service) {
 			try {
 				await refreshSessionChanges(ctx);
-				const targets = await buildSessionReviewTargets(ctx);
+				const { targets } = await buildSessionReviewTargets(ctx);
 				if (targets.length) {
 					await service.setWorkspace(targets, { workspaceKey: sessionId });
 				}

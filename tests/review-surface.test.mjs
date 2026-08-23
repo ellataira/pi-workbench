@@ -41,6 +41,7 @@ import {
   buildReviewDisplayMetadata,
   buildSessionReviewTargets,
   buildReviewSuggestions,
+  filterReviewableSessionFileRecords,
   mergeSessionReviewFiles,
   mergeReviewFileCandidates,
   parseReviewPathArgument,
@@ -51,6 +52,22 @@ import {
   sortSessionReviewFiles,
   REVIEW_SUGGESTIONS_ENTRY
 } from "../src/review-suggestions.mjs";
+
+test("session review excludes unsupported, oversized, missing, and non-file targets before opening", () => {
+  assert.deepEqual(
+    filterReviewableSessionFileRecords([
+      { filePath: "/repo/docs/plan.md", mtimeMs: 40, size: 100, kind: "markdown", isFile: true },
+      { filePath: "/repo/src/main.go", mtimeMs: 30, size: 200, kind: "text", isFile: true },
+      { filePath: "/repo/archive.zip", mtimeMs: 20, size: 300, kind: null, isFile: true },
+      { filePath: "/repo/huge.md", mtimeMs: 10, size: 6 * 1024 * 1024, kind: "markdown", isFile: true },
+      { filePath: "/repo/directory", mtimeMs: 5, size: 0, kind: "text", isFile: false }
+    ]),
+    [
+      { filePath: "/repo/docs/plan.md", mtimeMs: 40, size: 100, kind: "markdown", isFile: true },
+      { filePath: "/repo/src/main.go", mtimeMs: 30, size: 200, kind: "text", isFile: true }
+    ]
+  );
+});
 
 test("review chooser names the last-turn files and recommends the newest file", () => {
   assert.deepEqual(
@@ -261,6 +278,10 @@ test("session review targets show explicit modes then session-only files by rece
         "/Users/ella/repo-b/docs/plan.md",
         "/Users/ella/repo-a/README.md"
       ],
+      recentFilePaths: [
+        "/Users/ella/repo-a/docs/plan.md",
+        "/Users/ella/repo-b/docs/plan.md"
+      ],
       modes: [
         { key: "recent", filePath: "/tmp/recent.diff", empty: false },
         { key: "staged", filePath: "/tmp/staged.diff", empty: true },
@@ -295,19 +316,19 @@ test("session review targets show explicit modes then session-only files by rece
       },
       {
         filePath: "/Users/ella/repo-a/docs/plan.md",
-        group: "Session files · newest first",
+        group: "Review now · last Pi turn",
         label: "01 · plan.md — docs/plan.md",
-        display: { title: "plan.md", scope: "Most recently edited · docs/plan.md" }
+        display: { title: "plan.md", scope: "Edited last Pi turn · docs/plan.md" }
       },
       {
         filePath: "/Users/ella/repo-b/docs/plan.md",
-        group: "Session files · newest first",
+        group: "Review now · last Pi turn",
         label: "02 · plan.md — ~/repo-b/docs/plan.md",
-        display: { title: "plan.md", scope: "Edited #2 this session · ~/repo-b/docs/plan.md" }
+        display: { title: "plan.md", scope: "Edited last Pi turn · ~/repo-b/docs/plan.md" }
       },
       {
         filePath: "/Users/ella/repo-a/README.md",
-        group: "Session files · newest first",
+        group: "Earlier this session · 1 file",
         label: "03 · README.md — README.md",
         display: { title: "README.md", scope: "Edited #3 this session · README.md" }
       }
@@ -888,14 +909,15 @@ test("one review workspace navigates a large session file set from a sidebar", a
 
   const opened = await service.openFiles(filePaths.map((filePath, index) => ({
     filePath,
-    group: index < 2 ? "Latest changes" : "Session history",
+    group: index < 2 ? "Review now · last Pi turn" : "Earlier this session · 10 files",
     label: index === 0 ? "01 · values.yaml — charts/values.yaml" : undefined
   })));
   assert.equal(opened.count, 12);
   const html = await (await fetch(opened.url)).text();
   assert.match(html, /class="review-sidebar"/);
-  assert.match(html, /Latest changes/);
-  assert.match(html, /Session history/);
+  assert.match(html, /Review now · last Pi turn/);
+  assert.match(html, /<details class="nav-group"/);
+  assert.match(html, /<summary>Earlier this session · 10 files<\/summary>/);
   assert.match(html, /@media\(max-width:800px\)/);
   assert.match(html, /class="nav-name">01 · values\.yaml<\/span><small>charts\/values\.yaml<\/small>/);
   assert.match(html, />file-11\.md<\/a>/);
@@ -949,16 +971,22 @@ test("a clean diff view reloads when its generated session diff changes", async 
 });
 
 test("review command defaults to the cumulative session workspace and reuses a cmux popout", async () => {
-  const source = await readFile(
-    new URL("../extensions/pi-review-surface.ts", import.meta.url),
-    "utf8"
-  );
+  const [source, surfaceSource] = await Promise.all([
+    readFile(new URL("../extensions/pi-review-surface.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/review-surface.mjs", import.meta.url), "utf8")
+  ]);
   assert.match(source, /openSessionReview\(ctx\)/);
   assert.match(source, /mergeSessionReviewFiles\(/);
   assert.match(source, /cmux", \["--json", "new-window"\]/);
   assert.match(source, /browser", "--surface", reviewSurfaceId, "navigate"/);
   assert.match(source, /recentFiles:/);
   assert.match(source, /buildSessionReviewTargets: buildSessionTargetList/);
+  assert.match(source, /filterReviewableSessionFileRecords/);
+  assert.match(source, /classifyReviewFile/);
+  assert.match(source, /reviewable file/);
+  assert.match(source, /skipped/);
+  assert.match(source, /recentFilePaths:/);
+  assert.match(surfaceSource, /startsWith\("Earlier this session"\)/);
   assert.match(source, /"HEAD\^\.\.HEAD"/);
   assert.match(source, /"origin\/main"/);
 });

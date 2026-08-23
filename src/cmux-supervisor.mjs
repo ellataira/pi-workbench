@@ -53,6 +53,127 @@ export function requireOwnedWorkspace(entries, workspace) {
   return entry;
 }
 
+const CHILD_PROGRESS_PHASES = new Set([
+  "starting",
+  "thinking",
+  "tool",
+  "waiting",
+  "failed",
+  "stopped"
+]);
+
+export function normalizeChildProgress(value) {
+  if (!value || value.version !== 1 || typeof value.sessionId !== "string") return null;
+  if (!CHILD_PROGRESS_PHASES.has(value.phase)) return null;
+  const timestamp = Date.parse(value.updatedAt);
+  if (!Number.isFinite(timestamp)) return null;
+  const toolName = typeof value.toolName === "string"
+    ? value.toolName.replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 80)
+    : "";
+  return {
+    version: 1,
+    sessionId: value.sessionId.slice(0, 160),
+    phase: value.phase,
+    ...(toolName ? { toolName } : {}),
+    updatedAt: new Date(timestamp).toISOString()
+  };
+}
+
+function childActivityLabel(updatedAt, now) {
+  const ageMs = Math.max(0, now - Date.parse(updatedAt));
+  if (ageMs < 10_000) return "active now";
+  const age = ageMs < 60_000
+    ? `${Math.floor(ageMs / 1000)}s ago`
+    : ageMs < 3_600_000
+      ? `${Math.floor(ageMs / 60_000)}m ago`
+      : `${Math.floor(ageMs / 3_600_000)}h ago`;
+  return ageMs >= 15_000 ? `heartbeat stale · ${age}` : age;
+}
+
+function childPhaseLabel(progress) {
+  if (!progress) return "starting";
+  if (progress.phase === "tool") return `working: ${progress.toolName || "tool"}`;
+  if (progress.phase === "thinking") return "thinking";
+  if (progress.phase === "waiting") return "waiting for review or steering";
+  if (progress.phase === "failed") return "needs attention";
+  return progress.phase;
+}
+
+const ANSI_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
+const SECRET_VALUE = /(\b(?:api[_-]?key|authorization|password|secret|token)\b\s*[:=]\s*(?:bearer\s+)?)([^\s]+)/gi;
+const TOKEN_VALUE = /\b(?:sk-[a-z0-9_-]{12,}|ghp_[a-z0-9]{12,}|github_pat_[a-z0-9_]{12,}|xox[baprs]-[a-z0-9-]{12,})\b/gi;
+
+export function childScreenTail(
+  value,
+  { maxLines = 3, maxLineChars = 160 } = {}
+) {
+  const lines = String(value ?? "")
+    .replace(ANSI_ESCAPE, "")
+    .split("\n")
+    .map((line) => line.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim())
+    .filter(Boolean)
+    .filter((line) => !/^[─━═_\-=\s]+$/.test(line))
+    .filter((line) => line !== ">")
+    .filter((line) => !(line.includes("think:") && /\b\d+(?:\.\d+)?%/.test(line)))
+    .map((line) => line
+      .replace(SECRET_VALUE, "$1[redacted]")
+      .replace(TOKEN_VALUE, "[redacted]")
+      .slice(0, Math.max(1, maxLineChars)));
+  return lines.slice(-Math.max(1, maxLines));
+}
+
+export function formatChildProgressLines(
+  children,
+  progressBySessionId,
+  { now = Date.now(), limit = 4, screenTailBySessionId = new Map() } = {}
+) {
+  const visible = (Array.isArray(children) ? children : [])
+    .map((child) => ({ child, progress: progressBySessionId?.get(child.sessionId) ?? null }))
+    .filter(({ progress }) => progress?.phase !== "stopped")
+    .slice(0, Math.max(1, limit));
+  if (!visible.length) return [];
+  const lines = [
+    `Agent map · supervisor (this tab) · ${visible.length} active child${visible.length === 1 ? "" : "ren"}`
+  ];
+  for (const [index, { child, progress }] of visible.entries()) {
+    const activity = progress?.updatedAt
+      ? childActivityLabel(progress.updatedAt, now)
+      : "startup pending";
+    const tree = index === visible.length - 1 ? "└─" : "├─";
+    lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)} · ${activity}`);
+    lines.push(`   open: /agents focus ${child.name} · follow: /agents watch ${child.name}`);
+    lines.push(`   ${child.branch || child.cwd || "isolated workspace"}`);
+    for (const line of screenTailBySessionId.get(child.sessionId) ?? []) {
+      lines.push(`   ↳ ${line}`);
+    }
+  }
+  lines.push("Child tabs return here with /agents parent");
+  return lines;
+}
+
+export function formatChildIdentityLines(name = "delegated agent") {
+  return [
+    `Agent map · child: ${String(name).trim() || "delegated agent"} (this tab)`,
+    "Return to supervisor · /agents parent",
+    "The supervisor follows a bounded live tail automatically"
+  ];
+}
+
+export function resolveOwnedChildSelector(children, selector) {
+  const value = String(selector ?? "").trim();
+  if (!value) throw new Error("A child name or session id is required");
+  const exact = children.filter(
+    (child) => child.sessionId === value || child.name === value
+  );
+  if (exact.length === 1) return exact[0];
+  const matches = children.filter(
+    (child) => child.sessionId?.startsWith(value) || child.name?.startsWith(value)
+  );
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error(`Child selector is ambiguous: ${value}`);
+  throw new Error(`Unknown owned child: ${value}`);
+}
+
 export function buildChildCommand({ includeTask = true } = {}) {
   const task = includeTask ? `task="$PI_CMUX_CHILD_TASK"; ` : "";
   const taskArgument = includeTask ? ` "$task"` : "";
@@ -71,12 +192,16 @@ export function buildDetachedForkCommand({ includeTask = false } = {}) {
 export function buildDetachedForkEnvironment({
   sessionFile,
   parentSessionId,
+  parentWorkspaceId,
+  childName,
   task
 }) {
   return [
     `AGENT_JOURNAL_PARENT_CLIENT=pi`,
     `AGENT_JOURNAL_PARENT_SESSION_ID=${parentSessionId}`,
     `AGENT_JOURNAL_CHILD_CLASS=substantial`,
+    ...(parentWorkspaceId ? [`PI_CMUX_SUPERVISOR_WORKSPACE_ID=${parentWorkspaceId}`] : []),
+    ...(childName ? [`PI_CMUX_CHILD_DISPLAY_NAME=${childName}`] : []),
     `PI_CMUX_FORK_SESSION_FILE=${sessionFile}`,
     ...(task ? [`PI_CMUX_FORK_TASK=${task}`] : [])
   ];
@@ -87,7 +212,8 @@ export function buildChildEnvironment({
   name,
   task,
   parentSessionId,
-  childClass = "substantial"
+  childClass = "substantial",
+  parentWorkspaceId
 }) {
   return [
     `AGENT_JOURNAL_PARENT_CLIENT=pi`,
@@ -95,6 +221,8 @@ export function buildChildEnvironment({
     `AGENT_JOURNAL_CHILD_CLASS=${childClass}`,
     `PI_CMUX_CHILD_SESSION_ID=${sessionId}`,
     `PI_CMUX_CHILD_NAME=${name}`,
+    `PI_CMUX_CHILD_DISPLAY_NAME=${name}`,
+    ...(parentWorkspaceId ? [`PI_CMUX_SUPERVISOR_WORKSPACE_ID=${parentWorkspaceId}`] : []),
     `PI_CMUX_CHILD_TASK=${task}`
   ];
 }
@@ -164,6 +292,8 @@ ORCHESTRATION POLICY
 - Give each implementing child an isolated worktree and keep one writer per checkout.
 - Cap ordinary fan-out at four concurrent children and one level of nesting.
 - Give substantial children a concrete deliverable and verification contract; journal them as linked child sessions.
+- Before delegating, tell the user which named child will work and why. After launch, report its branch/worktree plus /agents focus <name> for live output and /agents status <name> for metadata-only progress.
+- Never leave the parent looking idle while a child works: keep the delegated-work widget visible and summarize child completion or failure promptly.
 - Never delegate merely to avoid doing a straightforward task.
 - When the user explicitly asks to start work in a /fork, create a detached fork in a new cmux tab; never substitute a background subagent.
 - After launching a detached /fork, do not continue that task in the parent session.

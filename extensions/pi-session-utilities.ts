@@ -1,3 +1,4 @@
+import { unlink } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -15,6 +16,7 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 		buildCopyChoices,
 		buildRewindChoices,
 		latestAssistantText,
+		resolveSessionDeletionTarget,
 	} = await importFreshSourceModule(utilitiesPath);
 
 	pi.registerCommand("rewind", {
@@ -54,6 +56,47 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 			pi.setSessionName(name);
 			const normalized = pi.getSessionName() ?? name;
 			ctx.ui.notify(`Session renamed: ${normalized}`, "info");
+		},
+	});
+
+	pi.registerCommand("end", {
+		description: "Permanently delete the current session and exit Pi",
+		handler: async (_args, ctx) => {
+			const target = resolveSessionDeletionTarget(
+				ctx.sessionManager.getSessionFile(),
+				ctx.sessionManager.getSessionDir(),
+			);
+			if (!target) {
+				ctx.ui.notify(
+					"This session has no safely deletable native session file. Use /quit to exit without deleting anything.",
+					"warning",
+				);
+				return;
+			}
+
+			const sessionName = pi.getSessionName();
+			const confirmed = await ctx.ui.confirm(
+				"End and permanently delete this session?",
+				[
+					sessionName ? `Session: ${sessionName}` : "Session: current unnamed session",
+					`File: ${target}`,
+					"This deletes only the current Pi session history. It does not delete project files, worktrees, journal memories, or other sessions.",
+				].join("\n\n"),
+			);
+			if (!confirmed) {
+				ctx.ui.notify("Session deletion cancelled.", "info");
+				return;
+			}
+
+			try {
+				await unlink(target);
+			} catch (error: any) {
+				if (error?.code !== "ENOENT") {
+					ctx.ui.notify(`Could not delete the current session: ${error?.message ?? error}`, "error");
+					return;
+				}
+			}
+			ctx.shutdown();
 		},
 	});
 

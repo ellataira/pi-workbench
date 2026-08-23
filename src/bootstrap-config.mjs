@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, realpath, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 async function readJson(filePath, fallback = {}) {
@@ -23,11 +23,17 @@ function unique(values) {
   return [...new Set(values)];
 }
 
+function isBundledWorkbenchPackage(value) {
+  return /^npm:pi-subagents(?:@|$)/.test(value);
+}
+
 export function mergePiSettings(current, portable) {
   return {
     ...current,
     ...portable,
-    packages: unique([...(current.packages ?? []), ...(portable.packages ?? [])]),
+    packages: unique([...(current.packages ?? []), ...(portable.packages ?? [])]).filter(
+      (entry) => !isBundledWorkbenchPackage(entry),
+    ),
   };
 }
 
@@ -89,6 +95,7 @@ export async function installWorkbench({ homeDir, repoRoot, replaceExisting = fa
   const profilesPath = path.join(piDir, "project-profiles.json");
   const mcpPath = path.join(piDir, "mcp.json");
   const subagentPath = path.join(piDir, "extensions/subagent/config.json");
+  const personaPanelPath = path.join(homeDir, ".agents/skills/persona-panel/SKILL.md");
 
   const currentSettings = await readJson(settingsPath);
   const portableSettings = await readJson(path.join(configRoot, "settings.json"));
@@ -110,5 +117,16 @@ export async function installWorkbench({ homeDir, repoRoot, replaceExisting = fa
     mcpServers: { ...(currentMcp.mcpServers ?? {}), ...(portableMcp.mcpServers ?? {}) },
   });
 
-  return { extensionPath, extensionBackup, settingsPath, profilesPath, mcpPath, subagentPath };
+  await mkdir(path.dirname(personaPanelPath), { recursive: true });
+  await copyFile(path.join(resolvedRepo, "skills/persona-panel/SKILL.md"), personaPanelPath);
+
+  return {
+    extensionPath,
+    extensionBackup,
+    settingsPath,
+    profilesPath,
+    mcpPath,
+    subagentPath,
+    personaPanelPath,
+  };
 }

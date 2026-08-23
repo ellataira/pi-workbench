@@ -19,7 +19,8 @@ import {
 import path from "node:path";
 import { Marked } from "marked";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_REVIEW_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = MAX_REVIEW_FILE_BYTES;
 const MAX_REQUEST_BYTES = 6 * 1024 * 1024;
 const MAX_SELECTION_CHARS = 16_000;
 const MAX_COMMENT_CHARS = 8_000;
@@ -753,13 +754,14 @@ function reviewPageHtml(state, scriptNonce) {
   const positionOverlaySource = positionAnchoredOverlay.toString();
   const preserveAnchorSource = scrollDeltaToPreserveAnchor.toString();
   const diskUpdateActionSource = reviewDiskUpdateAction.toString();
-  let navigationGroup = "";
-  const navigationHtml = (state.navigation ?? []).map((item) => {
+  const navigationGroups = [];
+  for (const item of state.navigation ?? []) {
     const group = item.group || "Session files";
-    const heading = group !== navigationGroup
-      ? `<strong>${escapeHtml(group)}</strong>`
-      : "";
-    navigationGroup = group;
+    const current = navigationGroups.at(-1);
+    if (!current || current.group !== group) navigationGroups.push({ group, items: [item] });
+    else current.items.push(item);
+  }
+  const navigationLinkHtml = (item, group) => {
     const separator = item.label.indexOf(" — ");
     const content = separator >= 0
       ? `<span class="nav-name">${escapeHtml(item.label.slice(0, separator))}</span><small>${escapeHtml(item.label.slice(separator + 3))}</small>`
@@ -767,7 +769,15 @@ function reviewPageHtml(state, scriptNonce) {
     const classes = [item.current ? "active" : "", group === "Review modes" ? "mode" : ""]
       .filter(Boolean)
       .join(" ");
-    return `${heading}<a href="${escapeHtml(item.url)}" title="${escapeHtml(item.label)}" class="${classes}">${content}</a>`;
+    return `<a href="${escapeHtml(item.url)}" title="${escapeHtml(item.label)}" class="${classes}">${content}</a>`;
+  };
+  const navigationHtml = navigationGroups.map(({ group, items }) => {
+    const links = items.map((item) => navigationLinkHtml(item, group)).join("");
+    if (group.startsWith("Earlier this session")) {
+      const opened = items.some((item) => item.current) ? " open" : "";
+      return `<details class="nav-group"${opened}><summary>${escapeHtml(group)}</summary>${links}</details>`;
+    }
+    return `<strong>${escapeHtml(group)}</strong>${links}`;
   }).join("");
   return `<!doctype html>
 <html>
@@ -791,8 +801,8 @@ main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14
 #selection-action{position:fixed;z-index:18;padding:6px 10px;border:0;border-radius:999px;background:var(--accent);color:white;box-shadow:0 6px 20px rgb(0 0 0/.22);font-weight:650}
 #diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
 .status{color:var(--muted);font-size:12px}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
-.review-shell{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);width:100%;align-items:start}.review-sidebar{position:sticky;top:51px;height:calc(100vh - 51px);overflow:auto;padding:14px 10px;border-right:1px solid var(--border);background:var(--card)}.review-sidebar strong{display:block;padding:10px 9px 5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.review-sidebar strong:first-child{padding-top:3px}.review-sidebar a{display:block;margin:2px 0;padding:8px 9px;border-radius:7px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}.review-sidebar a.mode{border:1px solid var(--border);margin-bottom:5px}.review-sidebar a .nav-name{display:block;font-weight:650}.review-sidebar a small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:400}.review-sidebar a:hover{background:var(--bg)}.review-sidebar a.active{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);font-weight:650}.review-sidebar a.active small{color:inherit;opacity:.78}
-@media(max-width:800px){header{flex-wrap:wrap}header .review-identity{flex:1 0 100%}.review-identity strong,.review-identity small{max-width:100%}.review-shell{grid-template-columns:1fr}.review-sidebar{position:sticky;top:91px;z-index:4;display:flex;height:auto;max-height:34vh;gap:5px;overflow:auto;padding:8px;border-right:0;border-bottom:1px solid var(--border)}.review-sidebar strong{position:sticky;left:0;flex:0 0 auto;padding:8px 5px;background:var(--card)}.review-sidebar a{flex:0 0 auto;max-width:240px}main{padding:0 12px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
+.review-shell{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);width:100%;align-items:start}.review-sidebar{position:sticky;top:51px;height:calc(100vh - 51px);overflow:auto;padding:14px 10px;border-right:1px solid var(--border);background:var(--card)}.review-sidebar strong{display:block;padding:10px 9px 5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.review-sidebar strong:first-child{padding-top:3px}.review-sidebar a{display:block;margin:2px 0;padding:8px 9px;border-radius:7px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}.review-sidebar a.mode{border:1px solid var(--border);margin-bottom:5px}.review-sidebar a .nav-name{display:block;font-weight:650}.review-sidebar a small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:400}.review-sidebar a:hover{background:var(--bg)}.review-sidebar a.active{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);font-weight:650}.review-sidebar a.active small{color:inherit;opacity:.78}.nav-group{margin-top:7px;border-top:1px solid var(--border)}.nav-group summary{padding:10px 9px 6px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;cursor:pointer}.nav-group summary:hover{color:var(--text)}
+@media(max-width:800px){header{flex-wrap:wrap}header .review-identity{flex:1 0 100%}.review-identity strong,.review-identity small{max-width:100%}.review-shell{grid-template-columns:1fr}.review-sidebar{position:sticky;top:91px;z-index:4;display:flex;height:auto;max-height:34vh;gap:5px;overflow:auto;padding:8px;border-right:0;border-bottom:1px solid var(--border)}.review-sidebar strong{position:sticky;left:0;flex:0 0 auto;padding:8px 5px;background:var(--card)}.review-sidebar a{flex:0 0 auto;max-width:240px}.nav-group{flex:0 0 min(280px,80vw);margin-top:0;border-top:0}.nav-group summary{padding:8px 5px}main{padding:0 12px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
 </style>
 </head>
 <body>
@@ -904,7 +914,7 @@ function renderWorkspaceNavigation(navigation){
   const signature=navigation.map((item)=>(item.group||"")+"|"+item.label+"|"+item.url+"|"+item.current).join("\\n");
   if(reviewSidebar.dataset.signature===signature)return;
   reviewSidebar.dataset.signature=signature;reviewSidebar.innerHTML="";
-  let group="";for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading)}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}reviewSidebar.appendChild(link)}
+  let group="",container=reviewSidebar;for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;if(group.startsWith("Earlier this session")){const details=document.createElement("details");details.className="nav-group";details.open=navigation.some((candidate)=>candidate.current&&(candidate.group||"Session files")===group);const summary=document.createElement("summary");summary.textContent=group;details.appendChild(summary);reviewSidebar.appendChild(details);container=details}else{const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading);container=reviewSidebar}}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}container.appendChild(link)}
 }
 async function checkWorkspaceNavigation(){
   if(document.hidden||!reviewSidebar)return;

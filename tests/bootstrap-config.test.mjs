@@ -25,14 +25,13 @@ test("portable settings merge preserves machine-specific packages and provider",
     defaultModel: "claude-sonnet",
   };
   const portable = {
-    packages: ["../../.agents/extensions/agent-journal", "npm:pi-subagents@0.35.1"],
+    packages: ["../../.agents/extensions/agent-journal"],
     theme: "light",
   };
 
   assert.deepEqual(mergePiSettings(current, portable), {
     packages: [
       "../../dd/private-package",
-      "npm:pi-subagents@0.35.1",
       "../../.agents/extensions/agent-journal",
     ],
     defaultProvider: "anthropic",
@@ -47,6 +46,7 @@ test("installation backs up an existing extension and writes merged config", asy
   const extensionPath = path.join(homeDir, ".agents/extensions/agent-journal");
   const piDir = path.join(homeDir, ".pi/agent");
   await mkdir(path.join(repoRoot, "config/pi"), { recursive: true });
+  await mkdir(path.join(repoRoot, "skills/persona-panel"), { recursive: true });
   await mkdir(extensionPath, { recursive: true });
   await mkdir(piDir, { recursive: true });
   await writeFile(path.join(extensionPath, "old.txt"), "old source\n");
@@ -60,6 +60,10 @@ test("installation backs up an existing extension and writes merged config", asy
   );
   await writeFile(path.join(repoRoot, "config/pi/project-profiles.json"), "{}\n");
   await writeFile(path.join(repoRoot, "config/pi/subagent-config.json"), "{}\n");
+  await writeFile(
+    path.join(repoRoot, "skills/persona-panel/SKILL.md"),
+    "---\nname: persona-panel\n---\ntracked workflow contract\n",
+  );
   await writeFile(
     path.join(repoRoot, "config/pi/mcp.json"),
     JSON.stringify({
@@ -86,4 +90,8 @@ test("installation backs up an existing extension and writes merged config", asy
       slack: { command: "python3", args: [`${homeDir}/.agents/slack-proxy.py`] },
     },
   });
+  assert.equal(
+    await readFile(path.join(homeDir, ".agents/skills/persona-panel/SKILL.md"), "utf8"),
+    "---\nname: persona-panel\n---\ntracked workflow contract\n",
+  );
 });

@@ -1,7 +1,18 @@
+import path from "node:path";
+
 const MAX_HISTORY_CHOICES = 30;
 const MAX_COMMAND_CHOICES = 20;
 const MAX_COMMAND_CHARS = 8_000;
 const COMMAND_PREFIX = /^(?:sudo\s+)?(?:git|gh|npm|npx|pnpm|yarn|bun|node|deno|python3?|pip3?|uv|go|cargo|rustup|make|cmake|bazel|dda|docker|podman|kubectl|helm|terraform|ansible|curl|wget|ssh|scp|rsync|cmux|pi|rg|grep|sed|awk|find|ls|cd|pwd|mkdir|touch|chmod|chown|brew|xcodebuild|swift|java|mvn|gradle|gradlew|pytest|jest|vitest)\b|^(?:\.{0,2}\/)[^\s]+/;
+
+export function resolveSessionDeletionTarget(sessionFile, sessionDir) {
+  if (typeof sessionFile !== "string" || typeof sessionDir !== "string") return undefined;
+  if (!sessionFile.trim() || !sessionDir.trim()) return undefined;
+  const target = path.resolve(sessionFile);
+  const directory = path.resolve(sessionDir);
+  if (path.dirname(target) !== directory || path.extname(target) !== ".jsonl") return undefined;
+  return target;
+}
 
 function textContent(content) {
   if (typeof content === "string") return content;

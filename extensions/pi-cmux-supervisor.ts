@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
 	SessionManager,
@@ -9,27 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import {
-	buildAgentChoices,
-	buildChildCommand,
-	buildChildEnvironment,
-	buildDetachedForkCommand,
-	buildDetachedForkEnvironment,
-	buildShellReadyCommand,
-	buildSpawnArguments,
-	buildWorktreeArguments,
-	childWorktreePlan,
-	orchestrationPolicy,
-	parseWorkspaceIdentifiers,
-	requireOwnedWorkspace,
-	slug,
-	waitForPath,
-} from "../src/cmux-supervisor.mjs";
-import {
-	classifyOwnedWorktree,
-	cleanupEligibility,
-	recoveryPlan,
-} from "../src/worktree-lifecycle.mjs";
+import { importFreshSourceModule } from "../src/fresh-module.mjs";
 
 const Action = Type.Union([
 	Type.Literal("spawn"),
@@ -44,7 +25,39 @@ const Action = Type.Union([
 	Type.Literal("cleanup"),
 ]);
 
-export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
+export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
+	const supervisorSourcePath = fileURLToPath(
+		new URL("../src/cmux-supervisor.mjs", import.meta.url),
+	);
+	const {
+		buildAgentChoices,
+		buildChildCommand,
+		buildChildEnvironment,
+		buildDetachedForkCommand,
+		buildDetachedForkEnvironment,
+		buildShellReadyCommand,
+		buildSpawnArguments,
+		buildWorktreeArguments,
+		childWorktreePlan,
+		childScreenTail,
+		formatChildProgressLines,
+		formatChildIdentityLines,
+		normalizeChildProgress,
+		orchestrationPolicy,
+		parseWorkspaceIdentifiers,
+		requireOwnedWorkspace,
+		resolveOwnedChildSelector,
+		slug,
+		waitForPath,
+	} = await importFreshSourceModule(supervisorSourcePath);
+	const worktreeSourcePath = fileURLToPath(
+		new URL("../src/worktree-lifecycle.mjs", import.meta.url),
+	);
+	const {
+		classifyOwnedWorktree,
+		cleanupEligibility,
+		recoveryPlan,
+	} = await importFreshSourceModule(worktreeSourcePath);
 	const registryPath =
 		process.env.PI_CMUX_CHILD_REGISTRY ??
 		path.join(homedir(), ".pi", "agent", "cmux-children.json");
@@ -54,7 +67,21 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	const launchRuntimeDir =
 		process.env.PI_CMUX_LAUNCH_RUNTIME ??
 		path.join(homedir(), ".pi", "agent", "cmux-launches");
+	const progressRuntimeDir =
+		process.env.PI_CMUX_PROGRESS_RUNTIME ??
+		path.join(homedir(), ".pi", "agent", "cmux-progress");
+	const inheritedProgressPath = process.env.PI_CMUX_CHILD_PROGRESS_PATH;
 	let registryMutation = Promise.resolve();
+	let childProgressPath = inheritedProgressPath ?? "";
+	let childProgressSessionId = "";
+	let childProgress: any;
+	let childHeartbeatTimer: NodeJS.Timeout | undefined;
+	let parentProgressTimer: NodeJS.Timeout | undefined;
+	let latestContext: any;
+	let currentParentSessionId = "";
+	let watchedChildSessionId = "";
+	let liveTailEnabled = true;
+	let parentProgressRefreshing = false;
 
 	type OwnedChild = {
 		identifiers: string[];
@@ -67,6 +94,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		worktreePath?: string;
 		branch?: string;
 		baseCommit?: string;
+		parentWorkspace?: string;
 	};
 
 	async function readRegistry(): Promise<OwnedChild[]> {
@@ -108,6 +136,114 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		return mutation;
 	}
 
+	function progressPathFor(sessionId: string) {
+		return path.join(progressRuntimeDir, `${sessionId}.json`);
+	}
+
+	async function writeProgress(targetPath: string, value: any) {
+		const normalized = normalizeChildProgress(value);
+		if (!normalized) throw new Error("Invalid child progress metadata");
+		await mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+		const temporary = `${targetPath}.${process.pid}.${randomUUID()}.tmp`;
+		await writeFile(temporary, `${JSON.stringify(normalized)}\n`, { mode: 0o600 });
+		await chmod(temporary, 0o600);
+		await rename(temporary, targetPath);
+	}
+
+	async function emitChildProgress(phase: string, toolName = "") {
+		if (!childProgressPath || !childProgressSessionId) return;
+		childProgress = {
+			version: 1,
+			sessionId: childProgressSessionId,
+			phase,
+			...(toolName ? { toolName } : {}),
+			updatedAt: new Date().toISOString(),
+		};
+		await writeProgress(childProgressPath, childProgress);
+	}
+
+	async function readProgress(sessionId: string) {
+		try {
+			return normalizeChildProgress(
+				JSON.parse(await readFile(progressPathFor(sessionId), "utf8")),
+			);
+		} catch (error: any) {
+			if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
+			throw error;
+		}
+	}
+
+	async function progressForChildren(children: OwnedChild[]) {
+		const entries = await Promise.all(
+			children.map(async (child) => [child.sessionId, await readProgress(child.sessionId)]),
+		);
+		return new Map(entries.filter((entry) => entry[1]));
+	}
+
+	async function refreshProgressWidget(ctx = latestContext) {
+		if (!ctx || !currentParentSessionId || childProgressPath) return;
+		if (parentProgressRefreshing) return;
+		parentProgressRefreshing = true;
+		try {
+			const children = (await readRegistry()).filter(
+				(child) => child.parentSessionId === currentParentSessionId,
+			);
+			const newest = [...children].sort(
+				(a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
+			)[0];
+			let watched = children.find((child) => child.sessionId === watchedChildSessionId);
+			if (!watched && newest) {
+				watched = newest;
+				watchedChildSessionId = newest.sessionId;
+			}
+			const screenTailBySessionId = new Map<string, string[]>();
+			if (liveTailEnabled && watched?.identifiers[0]) {
+				try {
+					const screen = await cmux([
+						"read-screen",
+						"--workspace",
+						watched.identifiers[0],
+						"--lines",
+						"12",
+					]);
+					const tail = childScreenTail(screen);
+					if (tail.length) screenTailBySessionId.set(watched.sessionId, tail);
+				} catch {
+					// A closed or non-terminal child still retains its metadata status.
+				}
+			}
+			const lines = formatChildProgressLines(
+				children,
+				await progressForChildren(children),
+				{ screenTailBySessionId },
+			);
+			ctx.ui.setWidget("pi-agents-progress", lines.length ? lines : undefined, {
+				placement: "belowEditor",
+			});
+		} finally {
+			parentProgressRefreshing = false;
+		}
+	}
+
+	function startChildHeartbeat() {
+		if (!childProgressPath) return;
+		if (childHeartbeatTimer) clearInterval(childHeartbeatTimer);
+		childHeartbeatTimer = setInterval(() => {
+			if (childProgress) void writeProgress(childProgressPath, {
+				...childProgress,
+				updatedAt: new Date().toISOString(),
+			});
+		}, 5_000);
+		childHeartbeatTimer.unref?.();
+	}
+
+	function startParentProgressPolling(ctx: any) {
+		if (childProgressPath) return;
+		if (parentProgressTimer) clearInterval(parentProgressTimer);
+		parentProgressTimer = setInterval(() => void refreshProgressWidget(ctx), 2_000);
+		parentProgressTimer.unref?.();
+	}
+
 	async function cmux(args: string[]) {
 		if (!process.env.CMUX_WORKSPACE_ID) {
 			throw new Error("cmux_session requires Pi to be running inside a cmux terminal");
@@ -137,9 +273,11 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		await mkdir(launchRuntimeDir, { recursive: true, mode: 0o700 });
 		const shellReadyPath = path.join(launchRuntimeDir, `${sessionId}.shell-ready`);
 		const childStartedPath = path.join(launchRuntimeDir, `${sessionId}.child-started`);
+		const progressPath = progressPathFor(sessionId);
 		await Promise.all([
 			rm(shellReadyPath, { force: true }),
 			rm(childStartedPath, { force: true }),
+			rm(progressPath, { force: true }),
 		]);
 
 		let identifiers: string[] | undefined;
@@ -148,9 +286,10 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				buildSpawnArguments({
 					name: `Pi · ${name}`,
 					cwd,
-					environment: [
-						...environment,
-						`PI_CMUX_CHILD_STARTED_PATH=${childStartedPath}`,
+						environment: [
+							...environment,
+							`PI_CMUX_CHILD_STARTED_PATH=${childStartedPath}`,
+							`PI_CMUX_CHILD_PROGRESS_PATH=${progressPath}`,
 					],
 					focus,
 				}),
@@ -168,6 +307,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			await waitForPath(childStartedPath, { exists: pathExists, timeoutMs: 30_000 });
 			return { identifiers, output };
 		} catch (error) {
+			await rm(progressPath, { force: true });
 			if (identifiers?.[0]) {
 				try {
 					await cmux(["close-workspace", "--workspace", identifiers[0]]);
@@ -232,8 +372,10 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				command: buildDetachedForkCommand({ includeTask: Boolean(task?.trim()) }),
 				environment: buildDetachedForkEnvironment({
 					sessionFile,
-					parentSessionId,
-					task: task?.trim(),
+				parentSessionId,
+				parentWorkspaceId: process.env.CMUX_WORKSPACE_ID,
+				childName: `fork · ${label}`,
+				task: task?.trim(),
 				}),
 				focus: true,
 			});
@@ -247,6 +389,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				name: `fork · ${label}`,
 				createdAt: new Date().toISOString(),
 				cwd: ctx.sessionManager.getCwd(),
+				parentWorkspace: process.env.CMUX_WORKSPACE_ID,
 			};
 			await appendRegistry(child);
 			return { ...child, sessionFile, output: launch.output };
@@ -342,6 +485,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					task: params.task,
 					parentSessionId,
 					childClass: "substantial",
+					parentWorkspaceId: process.env.CMUX_WORKSPACE_ID,
 				}),
 			});
 			identifiers = launch.identifiers;
@@ -356,6 +500,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				worktreePath: worktree?.path,
 				branch: worktree?.branch,
 				baseCommit,
+				parentWorkspace: process.env.CMUX_WORKSPACE_ID,
 			};
 			await appendRegistry(child);
 			return { ...child, output: launch.output };
@@ -382,10 +527,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	}
 
 	function findChild(children: OwnedChild[], sessionId?: string) {
-		if (!sessionId) throw new Error("A child sessionId is required");
-		const child = children.find((candidate) => candidate.sessionId === sessionId);
-		if (!child) throw new Error(`Unknown owned child session: ${sessionId}`);
-		return child;
+		return resolveOwnedChildSelector(children, sessionId);
 	}
 
 	async function pathExists(value?: string) {
@@ -448,10 +590,12 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 
 	async function statusChildren() {
 		const children = await readRegistry();
+		const progress = await progressForChildren(children);
 		return Promise.all(
-			children.map(async (child) =>
-				classifyOwnedWorktree(child, await lifecycleFacts(child)),
-			),
+			children.map(async (child) => ({
+				...classifyOwnedWorktree(child, await lifecycleFacts(child)),
+				progress: progress.get(child.sessionId) ?? null,
+			})),
 		);
 	}
 
@@ -481,6 +625,10 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 				"AGENT_JOURNAL_CHILD_CLASS=substantial",
 				`PI_CMUX_CHILD_SESSION_ID=${plan.sessionId}`,
 				`PI_CMUX_CHILD_NAME=${plan.name}`,
+				`PI_CMUX_CHILD_DISPLAY_NAME=${plan.name}`,
+				...(child.parentWorkspace
+					? [`PI_CMUX_SUPERVISOR_WORKSPACE_ID=${child.parentWorkspace}`]
+					: []),
 			],
 		});
 		const identifiers = launch.identifiers;
@@ -650,6 +798,10 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					details = await cleanupChild(params.sessionId);
 					break;
 			}
+			if (params.action === "spawn" || params.action === "fork") {
+				watchedChildSessionId = (details as OwnedChild).sessionId;
+				await refreshProgressWidget(ctx);
+			}
 			return {
 				content: [{ type: "text", text: JSON.stringify(details, null, 2) }],
 				details,
@@ -662,7 +814,18 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			{ task },
 			ctx.sessionManager.getSessionId(),
 		);
-		ctx.ui.notify(`Persistent agent started · ${result.name}`, "info");
+		watchedChildSessionId = result.sessionId;
+		await refreshProgressWidget(ctx);
+		ctx.ui.notify(
+			[
+				`Delegated implementation started · ${result.name}`,
+				`Branch: ${result.branch}`,
+				"Live output now follows in this parent.",
+				`Direct steering (optional): /agents focus ${result.name}`,
+				`Progress: /agents status ${result.name}`,
+			].join("\n"),
+			"info",
+		);
 	}
 
 	function startBackground(task: string, ctx: any) {
@@ -690,10 +853,10 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		const child = findChild(await readRegistry(), sessionId);
 		const selected = await ctx.ui.select(
 			`${child.name} · ${child.cwd}`,
-			["Focus in cmux", "Recover session", "Prepare patch", "Clean up worktree"],
+			["Open live output in cmux", "Recover session", "Prepare patch", "Clean up worktree"],
 		);
 		if (!selected) return;
-		if (selected === "Focus in cmux") {
+		if (selected === "Open live output in cmux") {
 			await focusChild(child);
 		} else if (selected === "Recover session") {
 			await recoverChild(sessionId);
@@ -754,8 +917,42 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 						choices.length ? choices.map((choice: any) => choice.label).join("\n") : "No persistent agents.",
 						"info",
 					);
+				} else if (action === "status") {
+					const owned = (await readRegistry()).filter(
+						(child) => child.parentSessionId === ctx.sessionManager.getSessionId(),
+					);
+					const selected = value ? [findChild(owned, value)] : owned;
+					const lines = formatChildProgressLines(selected, await progressForChildren(selected));
+					ctx.ui.notify(
+						lines.length ? lines.join("\n") : "No delegated agents for this session.",
+						"info",
+					);
+				} else if (action === "watch") {
+					if (value === "off") {
+						liveTailEnabled = false;
+						ctx.ui.notify("Live child tail hidden; metadata remains visible.", "info");
+					} else {
+						const owned = (await readRegistry()).filter(
+							(child) => child.parentSessionId === ctx.sessionManager.getSessionId(),
+						);
+						const child = findChild(owned, value);
+						watchedChildSessionId = child.sessionId;
+						liveTailEnabled = true;
+						ctx.ui.notify(`Following ${child.name} in this parent.`, "info");
+					}
+					await refreshProgressWidget(ctx);
 				} else if (action === "focus") {
 					await focusChild(findChild(await readRegistry(), value));
+				} else if (action === "parent") {
+					const current = (await readRegistry()).find(
+						(child) => child.sessionId === ctx.sessionManager.getSessionId(),
+					);
+					const parentWorkspace =
+						process.env.PI_CMUX_SUPERVISOR_WORKSPACE_ID ?? current?.parentWorkspace;
+					if (!parentWorkspace) {
+						throw new Error("This session has no recorded supervisor workspace");
+					}
+					await cmux(["select-workspace", "--workspace", parentWorkspace]);
 				} else if (action === "recover") {
 					await recoverChild(value);
 					ctx.ui.notify("Agent session recovered.", "info");
@@ -767,7 +964,7 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify("Agent worktree cleaned up.", "info");
 				} else {
 					throw new Error(
-						"Usage: /agents [persistent|background|list|focus|recover|patch|cleanup]",
+						"Usage: /agents [persistent|background|list|status|watch|focus|parent|recover|patch|cleanup]",
 					);
 				}
 			} catch (error) {
@@ -816,11 +1013,73 @@ export default function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		latestContext = ctx;
+		currentParentSessionId = ctx.sessionManager.getSessionId();
+		if (
+			!childProgressPath &&
+			process.env.AGENT_JOURNAL_CHILD_CLASS === "substantial" &&
+			process.env.AGENT_JOURNAL_PARENT_SESSION_ID
+		) {
+			childProgressPath = progressPathFor(currentParentSessionId);
+		}
 		const startedPath = process.env.PI_CMUX_CHILD_STARTED_PATH;
-		if (!startedPath) return;
-		await writeFile(startedPath, `${ctx.sessionManager.getSessionId()}\n`, {
-			mode: 0o600,
-		});
-		delete process.env.PI_CMUX_CHILD_STARTED_PATH;
+		if (childProgressPath) {
+			childProgressSessionId = ctx.sessionManager.getSessionId();
+			await emitChildProgress("starting");
+			startChildHeartbeat();
+			ctx.ui.setWidget(
+				"pi-agents-progress",
+				formatChildIdentityLines(process.env.PI_CMUX_CHILD_DISPLAY_NAME),
+				{ placement: "belowEditor" },
+			);
+			delete process.env.PI_CMUX_CHILD_PROGRESS_PATH;
+		} else {
+			const supervisorWorkspace = process.env.CMUX_WORKSPACE_ID;
+			if (supervisorWorkspace) {
+				await mutateRegistry((children) =>
+					children.map((child) =>
+						child.parentSessionId === currentParentSessionId && !child.parentWorkspace
+							? { ...child, parentWorkspace: supervisorWorkspace }
+							: child,
+					),
+				);
+			}
+			startParentProgressPolling(ctx);
+			await refreshProgressWidget(ctx);
+		}
+		if (startedPath) {
+			await writeFile(startedPath, `${ctx.sessionManager.getSessionId()}\n`, {
+				mode: 0o600,
+			});
+			delete process.env.PI_CMUX_CHILD_STARTED_PATH;
+		}
+	});
+
+	pi.on("agent_start", async () => {
+		await emitChildProgress("thinking");
+	});
+
+	pi.on("tool_execution_start", async (event) => {
+		await emitChildProgress("tool", event.toolName);
+	});
+
+	pi.on("tool_execution_end", async (event) => {
+		await emitChildProgress(event.isError ? "failed" : "thinking");
+	});
+
+	pi.on("agent_settled", async () => {
+		await emitChildProgress("waiting");
+	});
+
+	pi.on("session_shutdown", async (_event, ctx) => {
+		if (childHeartbeatTimer) clearInterval(childHeartbeatTimer);
+		if (parentProgressTimer) clearInterval(parentProgressTimer);
+		childHeartbeatTimer = undefined;
+		parentProgressTimer = undefined;
+		if (childProgressPath) {
+			await emitChildProgress("stopped");
+			ctx.ui.setWidget("pi-agents-progress", undefined);
+		}
+		else ctx.ui.setWidget("pi-agents-progress", undefined);
 	});
 }

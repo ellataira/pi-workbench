@@ -119,7 +119,7 @@ additional transcript or prompt copy is added to Obsidian or SQLite.
 | Need | Use |
 |---|---|
 | One focused task | Ask the current Pi session |
-| A quick parallel research or review pass | Ask Pi to use background subagents, or use `/parallel` |
+| A quick parallel research or review pass | Ask Pi to use background subagents, `/parallel-review`, or `/parallel-research` |
 | An implementing child you want to enter and chat with | `/agents` or `/agents persistent <task>` |
 | Several distinct review perspectives | `/skill:persona-panel` |
 | A durable compressed record of the session | `/checkpoint` |
@@ -159,7 +159,7 @@ never copies their conversation content.
 | Local `refresh-models` | Refreshes AI Gateway and local Ollama model catalogs |
 | Local `agent-journal` | Compressed journal, memory, cmux supervisor, review surface, and lifecycle pet |
 | `pi-mcp-adapter@2.12.1` | Lazy MCP discovery, auth, prompts, and tool calls |
-| `pi-subagents@0.35.1` | Background agents, chains, parallel runs, profiles, and cost |
+| Workbench-pinned `pi-subagents@0.52.1` | Scripted background workflows, parallel agents, profiles, and cost |
 | `context-mode@1.0.169` | Working-context compression, indexing, and retrieval |
 | `pi-markdown-preview@0.10.1` | Terminal, browser, and PDF previews |
 | `pi-powerline-footer@0.7.0` | Model, context, token, cost, and shell status |
@@ -281,6 +281,7 @@ Open-weight providers can be added later without redesigning those layers.
 | `/new` | Start a new session |
 | `/name <name>` | Name the current session |
 | `/rename <name>` | Rename the current session; without a name, show its current name |
+| `/end` | Confirm, permanently delete only the current native session history, and exit Pi |
 | `/session` | Show current session information |
 | `/resume` | Open the session picker; press `Alt+Enter` to clone the selected session in a new cmux tab |
 | `/tree` | Navigate or branch within the current session |
@@ -294,6 +295,13 @@ Open-weight providers can be added later without redesigning those layers.
 | `/share` | Upload the session as a private GitHub gist and create a shareable page |
 
 Pi stores native sessions under `~/.pi/agent/sessions/`.
+
+Use `/end` when you know the current conversation should not remain resumable.
+Pi shows the current session name and full `.jsonl` path before asking for
+confirmation. Confirming deletes that one native session file and exits Pi.
+Cancelling changes nothing. Project files, Git worktrees, compressed journal
+memories, and every other saved session remain untouched. Use `/quit` when you
+want to exit but keep the session available in `/resume`.
 
 In `/resume`, highlight any saved session and press `Alt+Enter` to clone its
 active branch into a new focused cmux tab. The original session and the current
@@ -373,13 +381,58 @@ The supervisor:
 4. records only the owned workspace and session metadata; and
 5. leaves the new workspace unfocused so the parent can keep working.
 
+`/reload` reloads the supervisor's helper modules from fresh source as well as
+the extension, preventing mixed old/new module exports during local upgrades.
+
+The parent immediately shows an **Agent map** widget with the child name,
+branch, lifecycle phase or active tool, heartbeat age, and a redacted three-line
+tail of its visible cmux output. The newest child is followed automatically, so
+you do not need to leave the parent just to understand what is happening. The
+tail is bounded, transient UI state: it is never appended to the Pi session,
+journal, progress files, or transcripts. The child separately writes only fixed
+progress metadata every five seconds. Use:
+
+```text
+/agents status campaign-core
+/agents watch campaign-core
+/agents watch off
+/agents focus campaign-core
+```
+
+`status` reports lifecycle metadata. `watch` chooses which child's bounded tail
+appears in the parent. `focus` is optional: it opens the full child Pi only when
+you want direct conversation, steering, or scrollback. Names and unique
+session-ID prefixes both work. Existing children can be watched immediately;
+children created before heartbeat support still need one `/reload` only if you
+also want their structured lifecycle phase.
+
+The on-screen hierarchy is explicit:
+
+```text
+Agent map · supervisor (this tab) · 1 active child
+└─ campaign-core · working: apply_patch · active now
+   open: /agents focus campaign-core · follow: /agents watch campaign-core
+   pi/campaign-core
+   ↳ Running focused controller tests
+Child tabs return here with /agents parent
+```
+
+Inside the child, it changes to:
+
+```text
+Agent map · child: campaign-core (this tab)
+Return to supervisor · /agents parent
+The supervisor follows a bounded live tail automatically
+```
+
 Long tasks are never pasted into the shell. A launch is registered only after
 the child Pi extension reports `session_start`; failed or timed-out launches
 close their workspace and remove the newly created worktree instead of leaving
 an apparently active child behind.
 
-Use cmux's sidebar or tabs to enter the child. It is a normal Pi session: chat
-with it, steer it, use `/tree`, and resume it later.
+Use the map's `/agents focus <name>` command to enter a child and `/agents
+parent` to return. It is a normal Pi session: chat with it, steer it, use
+`/tree`, and resume it later.
 
 ```text
 /agents list
@@ -426,14 +479,26 @@ The installed `subagent` tool runs bounded background agents. Your configuration
 defaults to asynchronous execution, permits four concurrent agents, allows up
 to twelve spawns per parent session, and limits nesting to one level.
 
-Ask naturally, or use:
+Ask naturally, or use the supported shortcuts:
 
 ```text
 /run <agent> <task>
-/parallel scout "inspect parser" -> reviewer "inspect tests"
-/chain scout "find cause" -> reviewer "pressure-test the proposal"
-/run-chain <chain-name> -- <task>
+/parallel-review <target>
+/parallel-research <topic>
+/review-loop <target>
+/prompt-workflow <name> [args]
 ```
+
+The removed `/parallel`, `/chain`, `/run-chain`, and `/chain-prompts` commands
+are not part of the current runtime. For custom orchestration, ask Pi to use one
+`workflowScript` with stable child keys and `runs.all(...)`. Built-in child
+roles run without ambient extensions, preventing the duplicate-tool startup
+failure seen with older Pi releases.
+
+The workbench hardens subagent debug artifacts globally: output may be retained,
+but raw task input, transcripts, and metadata are disabled. Persona panels also
+pass `artifacts:false` explicitly. Native Pi child sessions remain resumable and
+follow the same 30-day local retention policy as other Pi sessions.
 
 Inspect and manage them with:
 
@@ -449,7 +514,7 @@ Inspect and manage them with:
 Other advanced commands include `/subagents-watchdog`,
 `/subagents-load-profile`, `/subagents-refresh-provider-models`,
 `/subagents-generate-profiles`, `/subagents-check-profile`,
-`/prompt-workflow`, and `/chain-prompts`.
+and `/prompt-workflow`.
 
 Do not send two implementing agents into the same checkout. Use `/agents persistent` for an
 implementation you want to supervise interactively.
@@ -818,7 +883,7 @@ Authentication differs by transport:
 | `cmux_session` | Controls owned persistent children and detached conversation forks | `/agents persistent`, `/agents list`, or ask Pi to start a task in `/fork` |
 | `action_inbox` | Lists, publishes, and acknowledges fixed-metadata action states | `/inbox` |
 | Project profiles | Applies model, thinking, tools, verification, and agent policy | `/profile` |
-| `subagent` | Runs lightweight background agents | Ask naturally, `/run`, `/parallel`, `/chain` |
+| `subagent` | Runs lightweight background agents | Ask naturally, `/run`, `/parallel-review`, `/parallel-research` |
 | `mcp` | Lazily discovers and calls MCP tools | Ask naturally or use `/mcp` |
 | Context-mode tools | Compress, index, search, and retrieve working context | Automatic; `/ctx-stats` |
 | `ask_user_question` | Shows a structured question UI | The agent calls it when a choice is needed |
@@ -983,20 +1048,26 @@ included, along with bounded untracked files. Directly touched files provide a
 bounded fallback outside Git repositories.
 
 When the turn changed files, Pi shows **Session review ready — run /review**
-below the editor with the cumulative edited-file count:
+below the editor with the cumulative reviewable-file count:
 
 ```text
-/review
-2 edited files
+Session review ready — run /review
+77 reviewable files · 1 unavailable, oversized, or unsupported skipped
 ```
 
 The session list accumulates across turns rather than being replaced by the
 next turn, and touching an existing entry moves it to its modification-time
 position. Repository Git status never backfills unrelated files into this list.
+The sidebar keeps **Review modes** visible, shows at most five directly edited
+files from the latest turn under **Review now**, and hides the rest behind the
+collapsed **Earlier this session · N files** section. **Last Pi turn** is the
+default opening view. Selecting an older file automatically expands its section.
 If a turn makes no changes, **Last Pi turn** shows an explicit empty state rather
 than older work. Turn snapshots are bounded to
-100 files, 1 MiB per file, and 5 MiB total; oversized or unsupported files are
-reported and omitted. Internal `.pi-subagents` artifacts, nested Claude
+100 files, 1 MiB per file, and 5 MiB total. Before the cumulative workspace is
+opened, missing paths, unsupported file types, directories, and files above the
+viewer's 5 MiB limit are omitted as a group; one invalid entry cannot reject the
+remaining files or Git modes. Internal `.pi-subagents` artifacts, nested Claude
 worktrees, runtime state, build output, and dependencies are filtered before
 those limits are applied. Ignored Git files are not scanned unless Pi directly
 touches them.
@@ -1203,7 +1274,7 @@ In addition to the commands described above:
 | `/workspace [path|back|show]` | Choose, show, or switch the active Git repository while preserving the conversation |
 | `/review [choose|path|git [staged|base]]` | Open the cumulative session review workspace or an advanced file/Git view |
 | `/pair [start|reconnect|status|stop]` | Pair through, recover, inspect, or stop a neighboring terminal where you run every command |
-| `/agents [persistent|background|list|focus|recover|patch|cleanup]` | Guide or directly manage background and persistent agents |
+| `/agents [persistent|background|list|status|focus|recover|patch|cleanup]` | Guide or directly manage background and persistent agents; `status` is metadata-only and `focus` opens live output |
 | `/memory [status|checkpoint|distill|audit|cleanup|integrity|receipts]` | Guide or directly manage memory and retention |
 | `/hotkeys` | Show keybindings |
 | `/changelog` | Show release changes |
@@ -1293,10 +1364,11 @@ Check `/mcp` first if a server appears disconnected.
 ### Parallel read-only review
 
 ```text
-/parallel scout "find concurrency risks in this diff" -> reviewer "check tests and docs"
+/parallel-review current branch
 ```
 
-Watch it with `/subagents-fleet`; inspect aggregate cost with `/subagent-cost`.
+For distinct professional perspectives, use `/skill:persona-panel`. Watch active
+children with `/subagents-fleet`; inspect aggregate cost with `/subagent-cost`.
 
 ### Supervise an implementation
 
@@ -1304,8 +1376,9 @@ Watch it with `/subagents-fleet`; inspect aggregate cost with `/subagent-cost`.
 /agents persistent Add the new parser behavior, tests first, and update affected docs
 ```
 
-Open the child tab in cmux to chat directly. Keep the parent free for review,
-coordination, or a separate workstream.
+Progress and a bounded live tail remain in the parent. Open the child tab only
+when you want to chat with it directly or inspect full scrollback; otherwise
+keep working in the parent.
 
 ### End a meaningful session
 
@@ -1335,6 +1408,7 @@ durable record.
 | Repository-local context looks stale after switching | Run `/workspace` to confirm the active root, then `/reload` |
 | Child work is unclear | `/agents list`, then enter its cmux tab |
 | Background agent seems stuck | `/subagents-fleet`, `/subagents-doctor`, `/subagents-stop` |
+| Background agents fail instantly with an extension conflict | Run `/reload`, then `/subagents-doctor`; the workbench pins and isolates the current runtime, so an old standalone `npm:pi-subagents` entry should not appear in `pi list` |
 | MCP server is missing or disconnected | `/mcp`, then `/mcp reconnect <server>` |
 | Atlassian needs authentication | `/mcp reconnect atlassian`; approve in the browser and return to Pi |
 | Slack needs authentication | Use `/mcp`; if the shared proxy token must be replaced, run `python3 ~/.agents/skills/slack-mcp/scripts/slack-mcp-auth.py` |

@@ -11,9 +11,14 @@ import {
   buildShellReadyCommand,
   buildSpawnArguments,
   childWorktreePlan,
+  childScreenTail,
+  formatChildIdentityLines,
+  formatChildProgressLines,
+  normalizeChildProgress,
   orchestrationPolicy,
   parseWorkspaceIdentifiers,
   requireOwnedWorkspace,
+  resolveOwnedChildSelector,
   shellQuote,
   waitForPath
 } from "../src/cmux-supervisor.mjs";
@@ -42,7 +47,8 @@ test("passes long tasks through the workspace environment instead of terminal in
     name: "implement-cache",
     task,
     parentSessionId: "parent-456",
-    childClass: "substantial"
+    childClass: "substantial",
+    parentWorkspaceId: "workspace:2"
   });
 
   assert.deepEqual(environment, [
@@ -51,6 +57,8 @@ test("passes long tasks through the workspace environment instead of terminal in
     "AGENT_JOURNAL_CHILD_CLASS=substantial",
     "PI_CMUX_CHILD_SESSION_ID=child-123",
     "PI_CMUX_CHILD_NAME=implement-cache",
+    "PI_CMUX_CHILD_DISPLAY_NAME=implement-cache",
+    "PI_CMUX_SUPERVISOR_WORKSPACE_ID=workspace:2",
     "PI_CMUX_CHILD_TASK=" + task
   ]);
 });
@@ -91,7 +99,8 @@ test("launches an existing fork session without embedding its path in terminal i
   const command = buildDetachedForkCommand();
   const environment = buildDetachedForkEnvironment({
     sessionFile: "/tmp/session with spaces.jsonl",
-    parentSessionId: "parent-123"
+    parentSessionId: "parent-123",
+    parentWorkspaceId: "workspace:2"
   });
 
   assert.equal(
@@ -102,6 +111,7 @@ test("launches an existing fork session without embedding its path in terminal i
     "AGENT_JOURNAL_PARENT_CLIENT=pi",
     "AGENT_JOURNAL_PARENT_SESSION_ID=parent-123",
     "AGENT_JOURNAL_CHILD_CLASS=substantial",
+    "PI_CMUX_SUPERVISOR_WORKSPACE_ID=workspace:2",
     "PI_CMUX_FORK_SESSION_FILE=/tmp/session with spaces.jsonl"
   ]);
   assert.doesNotMatch(command, /session with spaces/);
@@ -230,6 +240,143 @@ test("agent chooser presents persistent and lightweight paths with readable chil
   );
 });
 
+test("child progress stores lifecycle metadata without prompts or terminal output", () => {
+  assert.deepEqual(
+    normalizeChildProgress({
+      version: 1,
+      sessionId: "child-123",
+      phase: "tool",
+      toolName: "apply_patch",
+      updatedAt: "2026-08-21T12:00:00.000Z",
+      prompt: "secret task",
+      output: "terminal transcript"
+    }),
+    {
+      version: 1,
+      sessionId: "child-123",
+      phase: "tool",
+      toolName: "apply_patch",
+      updatedAt: "2026-08-21T12:00:00.000Z"
+    }
+  );
+});
+
+test("parent progress lines identify the worker, phase, branch, activity, and focus action", () => {
+  assert.deepEqual(
+    formatChildProgressLines(
+      [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core", createdAt: "2026-08-21T11:00:00.000Z" }],
+      new Map([["child-123", {
+        version: 1,
+        sessionId: "child-123",
+        phase: "tool",
+        toolName: "apply_patch",
+        updatedAt: "2026-08-21T11:59:57.000Z"
+      }]]),
+      { now: Date.parse("2026-08-21T12:00:00.000Z") }
+    ),
+    [
+      "Agent map · supervisor (this tab) · 1 active child",
+      "└─ campaign-core · working: apply_patch · active now",
+      "   open: /agents focus campaign-core · follow: /agents watch campaign-core",
+      "   pi/campaign-core",
+      "Child tabs return here with /agents parent"
+    ]
+  );
+});
+
+test("child identity widget explains how to return to the supervisor", () => {
+  assert.deepEqual(formatChildIdentityLines("campaign-core"), [
+    "Agent map · child: campaign-core (this tab)",
+    "Return to supervisor · /agents parent",
+    "The supervisor follows a bounded live tail automatically"
+  ]);
+});
+
+test("parent progress can show a bounded redacted live child tail", () => {
+  const tail = childScreenTail([
+    "────────────────────────",
+    "Authorization: Bearer super-secret-token",
+    "Working on controller tests",
+    "API_KEY=also-secret",
+    "Tests passed",
+    " GPT-5.6 Terra · think:med · 42%",
+    ">"
+  ].join("\n"));
+
+  assert.deepEqual(tail, [
+    "Working on controller tests",
+    "API_KEY=[redacted]",
+    "Tests passed"
+  ]);
+  assert.doesNotMatch(tail.join("\n"), /secret-token|also-secret/);
+
+  const lines = formatChildProgressLines(
+    [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core" }],
+    new Map(),
+    { screenTailBySessionId: new Map([["child-123", tail]]) }
+  );
+  assert.deepEqual(lines.filter((line) => line.includes("↳")), [
+    "   ↳ Working on controller tests",
+    "   ↳ API_KEY=[redacted]",
+    "   ↳ Tests passed"
+  ]);
+});
+
+test("child screen tails are line and character bounded", () => {
+  assert.deepEqual(
+    childScreenTail("first\nsecond is long\nthird\nfourth", {
+      maxLines: 2,
+      maxLineChars: 8
+    }),
+    ["third", "fourth"]
+  );
+});
+
+test("parent progress makes stale and stopped children unambiguous", () => {
+  const child = {
+    sessionId: "child-123",
+    name: "campaign-core",
+    branch: "pi/campaign-core",
+    createdAt: "2026-08-21T11:00:00.000Z"
+  };
+  assert.match(
+    formatChildProgressLines(
+      [child],
+      new Map([["child-123", {
+        version: 1,
+        sessionId: "child-123",
+        phase: "thinking",
+        updatedAt: "2026-08-21T11:58:00.000Z"
+      }]]),
+      { now: Date.parse("2026-08-21T12:00:00.000Z") }
+    )[1],
+    /heartbeat stale · 2m ago/
+  );
+  assert.deepEqual(
+    formatChildProgressLines(
+      [child],
+      new Map([["child-123", {
+        version: 1,
+        sessionId: "child-123",
+        phase: "stopped",
+        updatedAt: "2026-08-21T12:00:00.000Z"
+      }]])
+    ),
+    []
+  );
+});
+
+test("child selectors accept readable names and unique short ids but reject ambiguity", () => {
+  const children = [
+    { sessionId: "12345678-aaaa", name: "campaign-core" },
+    { sessionId: "12349999-bbbb", name: "campaign-tests" }
+  ];
+  assert.equal(resolveOwnedChildSelector(children, "campaign-core"), children[0]);
+  assert.equal(resolveOwnedChildSelector(children, "12345678"), children[0]);
+  assert.throws(() => resolveOwnedChildSelector(children, "campaign"), /ambiguous/i);
+  assert.throws(() => resolveOwnedChildSelector(children, "missing"), /unknown/i);
+});
+
 test("supervisor exposes one agents command instead of implementation-detail aliases", async () => {
   const source = await readFile(
     new URL("../extensions/pi-cmux-supervisor.ts", import.meta.url),
@@ -242,4 +389,16 @@ test("supervisor exposes one agents command instead of implementation-detail ali
   assert.match(source, /session_before_fork/);
   assert.match(source, /Type\.Literal\("fork"\)/);
   assert.match(source, /waitForPath/);
+  assert.match(source, /pi-agents-progress/);
+  assert.match(source, /tool_execution_start/);
+  assert.match(source, /agent_settled/);
+  assert.match(source, /AGENT_JOURNAL_CHILD_CLASS === "substantial"/);
+  assert.match(source, /registerCommand\("agents"/);
+  assert.match(source, /action === "status"/);
+  assert.match(source, /"read-screen"/);
+  assert.match(source, /action === "watch"/);
+  assert.match(source, /action === "parent"/);
+  assert.match(source, /PI_CMUX_SUPERVISOR_WORKSPACE_ID/);
+  assert.match(source, /importFreshSourceModule/);
+  assert.doesNotMatch(source, /from "\.\.\/src\/cmux-supervisor\.mjs"/);
 });

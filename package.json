@@ -22,6 +22,7 @@
     "install:pi-copy-picker": "node scripts/install-pi-copy-picker.mjs",
     "install:pi-prompt-echo": "node scripts/install-pi-prompt-echo.mjs",
     "install:pi-resume-clone": "node scripts/install-pi-resume-clone.mjs",
+    "postinstall": "node scripts/harden-pi-subagents.mjs",
     "migrate:memory": "node bin/migrate-memory.mjs --apply",
     "test": "node --test tests/*.test.mjs",
     "test:e2e-review": "node scripts/test-review-comments-e2e.mjs"
@@ -37,7 +38,8 @@
       "./extensions/pi-workspace-switch.ts",
       "./extensions/pi-review-surface.ts",
       "./extensions/pi-session-utilities.ts",
-      "./extensions/pi-mcp-recovery.ts"
+      "./extensions/pi-mcp-recovery.ts",
+      "./node_modules/pi-subagents/index.ts"
     ]
   },
   "peerDependencies": {
@@ -49,6 +51,7 @@
     }
   },
   "dependencies": {
-    "marked": "18.0.7"
+    "marked": "18.0.7",
+    "pi-subagents": "0.52.1"
   }
 }

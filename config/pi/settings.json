@@ -2,7 +2,6 @@
   "packages": [
     "../../.agents/extensions/agent-journal",
     "npm:pi-mcp-adapter@2.12.1",
-    "npm:pi-subagents@0.35.1",
     "npm:context-mode@1.0.169",
     "npm:pi-markdown-preview@0.10.1",
     "npm:pi-powerline-footer@0.7.0",
@@ -18,6 +17,16 @@
   },
   "showLastPrompt": false,
   "defaultThinkingLevel": "medium",
+  "subagents": {
+    "agentOverrides": {
+      "delegate": { "extensions": [] },
+      "oracle": { "extensions": [] },
+      "researcher": { "extensions": [] },
+      "reviewer": { "extensions": [] },
+      "scout": { "extensions": [] },
+      "worker": { "extensions": [] }
+    }
+  },
   "compaction": {
     "enabled": true,
     "reserveTokens": 49152,
