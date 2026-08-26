@@ -142,7 +142,7 @@ test("review exposes one command surface and removes legacy aliases", async () =
 });
 
 test("exact commit ranges remain exact instead of becoming base comparisons", () => {
-  const range = "1111111111111111111111111111111111111111^..1111111111111111111111111111111111111111";
+  const range = `${"1".repeat(40)}^..${"1".repeat(40)}`;
   assert.deepEqual(buildGitDiffArgs(range), [
     "diff",
     "--no-ext-diff",
@@ -344,12 +344,12 @@ test("relevant files are pinned separately without scanning unrelated plans", ()
   const targets = buildSessionReviewTargets({
     cwd: "/repo",
     home: "/Users/ella",
-    filePaths: ["/repo/docs/migration-plan-plan.md", "/repo/src/controller.py"],
+    filePaths: ["/repo/docs/migration-plan.md", "/repo/src/controller.py"],
     recentFilePaths: ["/repo/src/controller.py"],
-    relevantFilePaths: ["/repo/docs/migration-plan-plan.md"]
+    relevantFilePaths: ["/repo/docs/migration-plan.md"]
   });
   assert.deepEqual(targets.map(({ filePath, group }) => ({ filePath, group })), [
-    { filePath: "/repo/docs/migration-plan-plan.md", group: "Relevant files · 1" },
+    { filePath: "/repo/docs/migration-plan.md", group: "Relevant files · 1" },
     { filePath: "/repo/src/controller.py", group: "Recent edits · newest first" }
   ]);
 });

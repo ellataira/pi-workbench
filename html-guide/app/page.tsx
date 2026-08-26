@@ -382,7 +382,7 @@ const sections: GuideSection[] = [
       <div className="trouble-list">
         <details><summary>Extension or skill change is not visible</summary><p>Run <code>/reload</code>. For shared skill changes, verify the canonical path under <code>~/.agents/skills</code>.</p></details>
         <details><summary>Model catalog looks stale</summary><p>Run <code>/refresh-models</code>, then inspect <code>/model</code>.</p></details>
-        <details><summary>MCP authentication is failing</summary><p>Use <code>/mcp</code>, reconnect the exact server, and complete any browser approval. Slack uses the shared proxy; Drive uses the Datadog Workspace endpoint.</p></details>
+        <details><summary>MCP authentication is failing</summary><p>Use <code>/mcp</code>, reconnect the exact server, and complete any browser approval. Slack uses the shared proxy; Drive uses the locally configured Workspace endpoint.</p></details>
         <details><summary>A child worktree appears abandoned</summary><p>Run <code>/agents</code> and select the child, or use <code>/agents recover &lt;session-id&gt;</code>. Cleanup remains fail-closed.</p></details>
         <details><summary>The daily memory review did not appear</summary><p>A launchd notification fires at 9 AM New York; the next Pi turn queues the review. Check the launchd service or run <code>/distill</code> manually.</p></details>
         <details><summary>Paddington is hidden or stale</summary><p>Run <code>/pet on</code>. After source changes, rebuild the native companion from the agent-journal package.</p></details>

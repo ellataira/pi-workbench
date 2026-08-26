@@ -9,11 +9,6 @@
     "computer-use": {
       "disabled": true
     },
-    "google-workspace": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote@0.1.38", "https://workspace.example.test/mcp", "--transport", "http-only"],
-      "lifecycle": "lazy"
-    },
     "slack": {
       "command": "python3",
       "args": ["__HOME__/.agents/skills/slack-mcp/scripts/slack-mcp-proxy.py"],

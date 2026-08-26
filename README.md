@@ -110,7 +110,8 @@ npm run install:monthly-audit
 Tracked content includes source, tests, docs, sanitized Pi settings, and
 credential-free MCP definitions. The repository excludes OAuth state, tokens,
 raw sessions, Obsidian content, SQLite/runtime state, caches, dependencies, and
-built applications.
+built applications. Organization-specific connector endpoints remain only in
+machine-local Pi configuration and are protected by a tracked privacy test.
 
 The daily GitHub sync validates `npm test` and `git diff --check`, rejects
 secret-like files, commits verified local changes, and safely integrates remote

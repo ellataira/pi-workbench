@@ -59,19 +59,9 @@ test("Slack uses the shared Keychain proxy without starting Pi OAuth", async () 
   assert.equal("oauth" in config.mcpServers.slack, false);
 });
 
-test("Google Drive uses the Datadog Workspace MCP endpoint lazily", async () => {
+test("portable MCP config omits organization-specific Workspace endpoints", async () => {
   const config = await loadConfig();
-  assert.deepEqual(config.mcpServers["google-workspace"], {
-    command: "npx",
-    args: [
-      "-y",
-      "mcp-remote@0.1.38",
-      "https://workspace.example.test/mcp",
-      "--transport",
-      "http-only"
-    ],
-    lifecycle: "lazy"
-  });
+  assert.equal(config.mcpServers["google-workspace"], undefined);
 });
 
 test("Trajectory MCP uses the installed user-level binary", async () => {

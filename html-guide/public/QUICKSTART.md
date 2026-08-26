@@ -819,6 +819,11 @@ Configured servers:
 | `computer-use` | Interactive computer control |
 | `trajectory` | Session telemetry |
 
+The organization-specific `google-workspace` endpoint is deliberately absent
+from `config/pi/mcp.json`. Bootstrap preserves an existing machine-local server
+definition, but the endpoint and its authentication state must never be added
+to this repository.
+
 Useful commands:
 
 ```text

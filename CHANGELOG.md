@@ -5,6 +5,12 @@ and current; the quickstart holds complete usage details.
 
 ## 2026-08-26
 
+- Made the GitHub repository private and removed organization-specific service
+  endpoints, workload identifiers, repository names, and local paths from the
+  tracked tree.
+- Kept the optional Workspace connector endpoint in machine-local Pi
+  configuration under a generic server name and added a privacy regression
+  test for future syncs.
 - Reworked Agent Center navigation so supervisors can follow, message, review,
   and open persistent children without unexpected tab switching.
 - Made `/review` session-scoped and recency-aware, with explicit last-turn,

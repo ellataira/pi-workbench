@@ -263,7 +263,7 @@ test("short read-only MCP lookups do not checkpoint, but MCP writes do", () => {
   recordToolStart(readState, {
     toolCallId: "read-1",
     toolName: "mcp",
-    args: { tool: "datadog_google_workspace_search_files" }
+    args: { tool: "google_workspace_search_files" }
   });
   recordToolCompletion(readState, {
     toolCallId: "read-1",
@@ -276,7 +276,7 @@ test("short read-only MCP lookups do not checkpoint, but MCP writes do", () => {
   recordToolStart(writeState, {
     toolCallId: "write-1",
     toolName: "mcp",
-    args: { tool: "datadog_google_workspace_create_file" }
+    args: { tool: "google_workspace_create_file" }
   });
   recordToolCompletion(writeState, {
     toolCallId: "write-1",
