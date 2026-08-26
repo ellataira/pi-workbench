@@ -9,7 +9,7 @@ const fragments = [
   ["datadog", "google-workspace"].join("-"),
   ["dd", "datad0g.com"].join("."),
   ["prod", "dog/api"].join("."),
-  ["Desktop", "example-repo"].join("/"),
+  ["Desktop", ["data", "dog-agent"].join("")].join("/"),
   ["gensim", "episode-"].join("/"),
   ["157", "3830"].join(""),
   ["pharmacy", "replicaepoch-store"].join("-"),
