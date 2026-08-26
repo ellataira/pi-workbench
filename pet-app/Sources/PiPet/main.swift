@@ -190,6 +190,10 @@ private func phasePriority(_ phase: String) -> Int {
     }
 }
 
+private func phaseRequiresAcknowledgement(_ phase: String) -> Bool {
+    ["failed", "waiting", "completed"].contains(phase)
+}
+
 private func parsedDate(_ value: String) -> Date {
     let fractional = ISO8601DateFormatter()
     fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -597,7 +601,7 @@ private final class PetController {
     private var pollTimer: Timer?
     private var selected: PetSnapshot?
     private var selectedInbox: ActionInboxItem?
-    private var acknowledgedCompletions = Set<String>()
+    private var acknowledgedAttentionStates = Set<String>()
     private var notifiedCompletions = Set<String>()
 
     init?(atlas: NSImage) {
@@ -659,9 +663,16 @@ private final class PetController {
             }
             return parsedDate(left.updatedAt) > parsedDate(right.updatedAt)
         }
-        let liveCandidates = store.liveSnapshots().filter { snapshot in
-            snapshot.phase != "completed" ||
-                !acknowledgedCompletions.contains(snapshot.completionKey)
+        let liveSnapshots = store.liveSnapshots()
+        let liveAttentionKeys = Set(
+            liveSnapshots
+                .filter { phaseRequiresAcknowledgement($0.phase) }
+                .map(\.completionKey)
+        )
+        acknowledgedAttentionStates.formIntersection(liveAttentionKeys)
+        let liveCandidates = liveSnapshots.filter { snapshot in
+            !phaseRequiresAcknowledgement(snapshot.phase) ||
+                !acknowledgedAttentionStates.contains(snapshot.completionKey)
         }
         let candidates = liveCandidates + inbox.map(\.snapshot)
         let next = candidates.sorted { left, right in
@@ -703,8 +714,8 @@ private final class PetController {
         if let selectedInbox {
             store.acknowledgeInboxItem(id: selectedInbox.id)
         }
-        if selected.phase == "completed" {
-            acknowledgedCompletions.insert(selected.completionKey)
+        if phaseRequiresAcknowledgement(selected.phase) {
+            acknowledgedAttentionStates.insert(selected.completionKey)
         }
 
         if selected.workspaceId != nil {

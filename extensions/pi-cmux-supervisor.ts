@@ -30,6 +30,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		new URL("../src/cmux-supervisor.mjs", import.meta.url),
 	);
 	const {
+		buildAgentCenterActions,
 		buildAgentChoices,
 		buildChildCommand,
 		buildChildEnvironment,
@@ -46,7 +47,9 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		orchestrationPolicy,
 		parseWorkspaceIdentifiers,
 		requireOwnedWorkspace,
+		resolveCurrentChild,
 		resolveOwnedChildSelector,
+		supervisorWorkspaceCandidates,
 		slug,
 		waitForPath,
 	} = await importFreshSourceModule(supervisorSourcePath);
@@ -818,11 +821,10 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		await refreshProgressWidget(ctx);
 		ctx.ui.notify(
 			[
-				`Delegated implementation started · ${result.name}`,
+				`Implementation agent started · ${result.name}`,
 				`Branch: ${result.branch}`,
 				"Live output now follows in this parent.",
-				`Direct steering (optional): /agents focus ${result.name}`,
-				`Progress: /agents status ${result.name}`,
+				"Run /agents to manage it without leaving this tab.",
 			].join("\n"),
 			"info",
 		);
@@ -849,24 +851,146 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		await pi.exec("open", ["-a", "cmux"]);
 	}
 
+	async function discoverSupervisorWorkspace(current: OwnedChild, ctx: any) {
+		const children = await readRegistry();
+		const listing = await cmux(["list-workspaces"]);
+		const candidates = supervisorWorkspaceCandidates(
+			listing,
+			children,
+			process.env.CMUX_WORKSPACE_ID,
+		);
+		if (!candidates.length) {
+			throw new Error("No non-child cmux workspace is available for the supervisor");
+		}
+		let selected = candidates[0];
+		if (candidates.length > 1) {
+			const choices = await Promise.all(
+				candidates.map(async (workspace: string) => {
+					try {
+						const screen = await cmux(["read-screen", "--workspace", workspace, "--lines", "6"]);
+						const preview = childScreenTail(screen, { maxLines: 1, maxLineChars: 100 })[0];
+						return { workspace, label: preview ? `${workspace} · ${preview}` : workspace };
+					} catch {
+						return { workspace, label: workspace };
+					}
+				}),
+			);
+			const label = await ctx.ui.select(
+				"Which tab is the supervisor? This choice is remembered.",
+				choices.map((choice) => choice.label),
+			);
+			if (!label) return "";
+			selected = choices.find((choice) => choice.label === label)?.workspace ?? "";
+		}
+		if (!selected) return "";
+		await mutateRegistry((entries) =>
+			entries.map((entry) =>
+				entry.sessionId === current.sessionId
+					? { ...entry, parentWorkspace: selected }
+					: entry,
+			),
+		);
+		process.env.PI_CMUX_SUPERVISOR_WORKSPACE_ID = selected;
+		return selected;
+	}
+
+	async function currentChildForContext(ctx: any) {
+		return resolveCurrentChild(await readRegistry(), {
+			sessionId: ctx.sessionManager.getSessionId(),
+			cwd: ctx.sessionManager.getCwd(),
+		}) as OwnedChild | null;
+	}
+
+	async function returnToSupervisor(ctx: any) {
+		const current = await currentChildForContext(ctx);
+		let parentWorkspace =
+			process.env.PI_CMUX_SUPERVISOR_WORKSPACE_ID ?? current?.parentWorkspace;
+		if (!parentWorkspace && current) {
+			parentWorkspace = await discoverSupervisorWorkspace(current, ctx);
+		}
+		if (!parentWorkspace) {
+			throw new Error("This child is not registered and its supervisor cannot be discovered");
+		}
+		await cmux(["select-workspace", "--workspace", parentWorkspace]);
+	}
+
+	async function openChildAgentsChooser(ctx: any) {
+		const current = await currentChildForContext(ctx);
+		const name = current?.name ?? "this child";
+		const selected = await ctx.ui.select(
+			`Agent Center · ${name} (child tab)`,
+			[
+				"Return to Agent Center",
+				"Show this child’s routing details",
+			],
+		);
+		if (selected === "Return to Agent Center") {
+			await returnToSupervisor(ctx);
+		} else if (selected === "Show this child’s routing details") {
+			ctx.ui.notify(
+				[
+					`Child: ${name}`,
+					`Worktree: ${current?.worktreePath ?? current?.cwd ?? ctx.sessionManager.getCwd()}`,
+					`Return: /agents parent`,
+				].join("\n"),
+				"info",
+			);
+		}
+	}
+
 	async function manageChild(sessionId: string, ctx: any) {
 		const child = findChild(await readRegistry(), sessionId);
 		const selected = await ctx.ui.select(
-			`${child.name} · ${child.cwd}`,
-			["Open live output in cmux", "Recover session", "Prepare patch", "Clean up worktree"],
+			`Agent Center · ${child.name} · stays in this tab`,
+			buildAgentCenterActions(),
 		);
 		if (!selected) return;
-		if (selected === "Open live output in cmux") {
+		if (selected === "Follow here") {
+			watchedChildSessionId = child.sessionId;
+			liveTailEnabled = true;
+			await refreshProgressWidget(ctx);
+			ctx.ui.notify(`Following ${child.name} here.`, "info");
+		} else if (selected === "Send instruction…") {
+			const message = await ctx.ui.input(`Instruction for ${child.name}`, "");
+			if (!message?.trim()) return;
+			const workspace = child.identifiers[0];
+			if (!workspace) throw new Error("The child has no cmux workspace identifier");
+			await cmux(["send", "--workspace", workspace, message.trim()]);
+			await cmux(["send-key", "--workspace", workspace, "enter"]);
+			ctx.ui.notify(`Instruction sent to ${child.name}.`, "info");
+		} else if (selected === "Review changes…") {
+			const result = await preparePatch(child.sessionId);
+			const command = `/review ${JSON.stringify(result.patchPath)}`;
+			if (ctx.ui.getEditorText?.().trim()) {
+				ctx.ui.notify(`Review ready · ${command}`, "info");
+			} else {
+				ctx.ui.setEditorText?.(command);
+				ctx.ui.notify("Review command is ready; press Enter to open it.", "info");
+			}
+		} else if (selected === "Open child tab…") {
 			await focusChild(child);
-		} else if (selected === "Recover session") {
-			await recoverChild(sessionId);
-			ctx.ui.notify(`Recovered ${child.name}`, "info");
-		} else if (selected === "Prepare patch") {
-			const result = await preparePatch(sessionId);
-			ctx.ui.notify(`Patch ready · ${result.patchPath}`, "info");
 		} else {
-			await cleanupChild(sessionId);
-			ctx.ui.notify(`Cleaned up ${child.name}`, "info");
+			const advanced = await ctx.ui.select(`More · ${child.name}`, [
+				"Interrupt current work",
+				"Recover session in child tab…",
+				"Prepare patch",
+				"Clean up finished worktree",
+			]);
+			if (advanced === "Interrupt current work") {
+				const workspace = child.identifiers[0];
+				if (!workspace) throw new Error("The child has no cmux workspace identifier");
+				await cmux(["send-key", "--workspace", workspace, "ctrl-c"]);
+				ctx.ui.notify(`Interrupted ${child.name}; its tab and files remain.`, "warning");
+			} else if (advanced === "Recover session in child tab…") {
+				await recoverChild(sessionId);
+				ctx.ui.notify(`Recovered ${child.name}`, "info");
+			} else if (advanced === "Prepare patch") {
+				const result = await preparePatch(sessionId);
+				ctx.ui.notify(`Patch ready · ${result.patchPath}`, "info");
+			} else if (advanced === "Clean up finished worktree") {
+				await cleanupChild(sessionId);
+				ctx.ui.notify(`Cleaned up ${child.name}`, "info");
+			}
 		}
 	}
 
@@ -874,7 +998,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		const children = await statusChildren();
 		const choices = buildAgentChoices(children);
 		const selected = await ctx.ui.select(
-			"Agents · choose a workflow",
+			"Agent Center · stays in this tab",
 			choices.map((choice: any) => choice.label),
 		);
 		if (!selected) return;
@@ -885,8 +1009,8 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		}
 		const task = await ctx.ui.input(
 			choice?.action === "background"
-				? "Task to fan out"
-				: "Implementation task for the persistent agent",
+				? "Parallel task"
+				: "Implementation task",
 			"",
 		);
 		if (!task?.trim()) return;
@@ -896,12 +1020,13 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("agents", {
 		description: "Start, inspect, focus, recover, patch, or clean up agents",
-		handler: async (args, ctx) => {
-			const input = args.trim();
-			try {
-				if (!input) {
-					await openAgentsChooser(ctx);
-					return;
+			handler: async (args, ctx) => {
+				const input = args.trim();
+				try {
+					if (!input) {
+						if (childProgressPath) await openChildAgentsChooser(ctx);
+						else await openAgentsChooser(ctx);
+						return;
 				}
 				const [action, ...rest] = input.split(/\s+/);
 				const value = rest.join(" ").trim();
@@ -943,16 +1068,8 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					await refreshProgressWidget(ctx);
 				} else if (action === "focus") {
 					await focusChild(findChild(await readRegistry(), value));
-				} else if (action === "parent") {
-					const current = (await readRegistry()).find(
-						(child) => child.sessionId === ctx.sessionManager.getSessionId(),
-					);
-					const parentWorkspace =
-						process.env.PI_CMUX_SUPERVISOR_WORKSPACE_ID ?? current?.parentWorkspace;
-					if (!parentWorkspace) {
-						throw new Error("This session has no recorded supervisor workspace");
-					}
-					await cmux(["select-workspace", "--workspace", parentWorkspace]);
+					} else if (action === "parent") {
+						await returnToSupervisor(ctx);
 				} else if (action === "recover") {
 					await recoverChild(value);
 					ctx.ui.notify("Agent session recovered.", "info");
@@ -1024,12 +1141,15 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		}
 		const startedPath = process.env.PI_CMUX_CHILD_STARTED_PATH;
 		if (childProgressPath) {
+			const currentChild = await currentChildForContext(ctx);
 			childProgressSessionId = ctx.sessionManager.getSessionId();
 			await emitChildProgress("starting");
 			startChildHeartbeat();
 			ctx.ui.setWidget(
 				"pi-agents-progress",
-				formatChildIdentityLines(process.env.PI_CMUX_CHILD_DISPLAY_NAME),
+				formatChildIdentityLines(
+					process.env.PI_CMUX_CHILD_DISPLAY_NAME ?? currentChild?.name,
+				),
 				{ placement: "belowEditor" },
 			);
 			delete process.env.PI_CMUX_CHILD_PROGRESS_PATH;

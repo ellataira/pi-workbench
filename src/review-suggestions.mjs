@@ -2,6 +2,7 @@ import path from "node:path";
 
 const DEFAULT_LIMIT = 3;
 export const REVIEW_SUGGESTIONS_ENTRY = "pi-review-suggestions-v1";
+export const REVIEW_SHORTLIST_ENTRY = "pi-review-shortlist-v1";
 const INTERNAL_REVIEW_SEGMENTS = new Set([
   ".agents",
   ".codex",
@@ -11,6 +12,112 @@ const INTERNAL_REVIEW_SEGMENTS = new Set([
   ".pi-subagents",
   "node_modules"
 ]);
+
+const PLAN_DOCUMENT_SEGMENTS = new Set([
+  "architecture",
+  "design",
+  "designs",
+  "plans",
+  "proposals",
+  "rfcs",
+  "specs"
+]);
+const PLAN_DOCUMENT_NAME = /(?:^|[-_.])(architecture|design|plan|planning|proposal|rfc(?:-?\d+)?|roadmap|spec)(?:[-_.]|$)/i;
+
+export function isPlanReviewDocument(filePath, root) {
+  if (typeof filePath !== "string" || typeof root !== "string") return false;
+  const absoluteRoot = path.resolve(root);
+  const absolute = path.resolve(filePath);
+  const relative = path.relative(absoluteRoot, absolute);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) return false;
+  const segments = relative.split(path.sep);
+  if (segments.some((segment) => INTERNAL_REVIEW_SEGMENTS.has(segment))) return false;
+  const extension = path.extname(absolute).toLowerCase();
+  if (extension !== ".md" && extension !== ".markdown") return false;
+  const directories = segments.slice(0, -1).map((segment) => segment.toLowerCase());
+  return directories.some((segment) => PLAN_DOCUMENT_SEGMENTS.has(segment))
+    || PLAN_DOCUMENT_NAME.test(path.basename(absolute, extension));
+}
+
+const REVIEW_SHORTLIST_REASONS = new Set([
+  "primary-change",
+  "task-plan",
+  "user-pinned",
+  "agent-selected"
+]);
+const REVIEW_SHORTLIST_SOURCES = new Set(["automatic", "agent", "user"]);
+const LOW_SIGNAL_REVIEW_SEGMENTS = new Set([
+  "artifacts",
+  "build",
+  "dist",
+  "fixtures",
+  "generated",
+  "snapshots",
+  "testdata",
+  "vendor"
+]);
+const LOW_SIGNAL_REVIEW_FILES = /^(?:package-lock\.json|pnpm-lock\.yaml|uv\.lock|yarn\.lock|go\.sum)$/i;
+
+function localReviewPath(filePath, cwd, allowedRoot) {
+  if (typeof filePath !== "string" || !filePath.trim()) return "";
+  const absolute = path.resolve(cwd, filePath);
+  const relative = path.relative(path.resolve(allowedRoot), absolute);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`)) return "";
+  if (relative.split(path.sep).some((segment) => INTERNAL_REVIEW_SEGMENTS.has(segment))) return "";
+  return absolute;
+}
+
+export function updateReviewShortlist(
+  previous,
+  additions,
+  cwd,
+  { allowedRoot = cwd, limit = 8, now = new Date().toISOString() } = {}
+) {
+  const normalized = [];
+  for (const item of [...(additions ?? []), ...(previous ?? [])]) {
+    const filePath = localReviewPath(item?.filePath, cwd, allowedRoot);
+    if (!filePath || normalized.some((candidate) => candidate.filePath === filePath)) continue;
+    const reason = REVIEW_SHORTLIST_REASONS.has(item?.reason) ? item.reason : "agent-selected";
+    const source = REVIEW_SHORTLIST_SOURCES.has(item?.source) ? item.source : "agent";
+    normalized.push({
+      filePath,
+      reason,
+      source,
+      addedAt: Number.isFinite(Date.parse(item?.addedAt)) ? new Date(item.addedAt).toISOString() : now
+    });
+    if (normalized.length >= Math.max(1, limit)) break;
+  }
+  return normalized;
+}
+
+export function restoreReviewShortlist(entries, cwd, options = {}) {
+  const entry = [...(entries ?? [])].reverse().find(
+    (candidate) => candidate?.type === "custom" && candidate.customType === REVIEW_SHORTLIST_ENTRY
+  );
+  return updateReviewShortlist([], entry?.data?.items, entry?.data?.cwd ?? cwd, {
+    allowedRoot: options.allowedRoot ?? cwd,
+    limit: options.limit ?? 8
+  });
+}
+
+export function automaticReviewShortlistCandidates(filePaths, cwd, { limit = 3 } = {}) {
+  return uniqueAbsolutePaths(filePaths, cwd)
+    .map((filePath, index) => {
+      const relative = path.relative(path.resolve(cwd), filePath);
+      const segments = relative.split(path.sep).map((segment) => segment.toLowerCase());
+      if (!relative || relative.startsWith(`..${path.sep}`)) return null;
+      if (segments.some((segment) => INTERNAL_REVIEW_SEGMENTS.has(segment))) return null;
+      if (segments.some((segment) => LOW_SIGNAL_REVIEW_SEGMENTS.has(segment))) return null;
+      if (LOW_SIGNAL_REVIEW_FILES.test(path.basename(filePath))) return null;
+      const testLike = /(?:^|[-_.])(test|tests|spec)(?:[-_.]|$)/i.test(path.basename(filePath));
+      const planLike = isPlanReviewDocument(filePath, cwd);
+      return { filePath, index, score: planLike ? 60 : testLike ? 20 : 40 };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, Math.max(1, limit))
+    .map((candidate) => candidate.filePath);
+}
 
 function uniqueAbsolutePaths(filePaths, cwd) {
   if (!Array.isArray(filePaths) || !cwd) return [];
@@ -218,7 +325,8 @@ export function buildSessionReviewTargets({
   home,
   filePaths = [],
   recentFilePaths = [],
-  reviewNowLimit = 5,
+  relevantFilePaths = [],
+  recentEditsLimit = 8,
   modes = []
 }) {
   const targets = [];
@@ -237,36 +345,42 @@ export function buildSessionReviewTargets({
       }
     });
   }
-  const files = uniqueAbsolutePaths(filePaths, cwd);
-  const recentSet = new Set(uniqueAbsolutePaths(recentFilePaths, cwd));
-  let reviewNow = files
-    .filter((filePath) => recentSet.has(filePath))
-    .slice(0, Math.max(1, reviewNowLimit));
-  const hasRecentFiles = reviewNow.length > 0;
-  if (!reviewNow.length && files.length) reviewNow = files.slice(0, 1);
-  const reviewNowSet = new Set(reviewNow);
-  const orderedFiles = [
-    ...reviewNow,
-    ...files.filter((filePath) => !reviewNowSet.has(filePath))
-  ];
-  const earlierCount = orderedFiles.length - reviewNow.length;
-  orderedFiles.forEach((filePath, index) => {
+  const relevant = uniqueAbsolutePaths(relevantFilePaths, cwd);
+  const relevantSet = new Set(relevant);
+  relevant.forEach((filePath, index) => {
     const displayPath = sessionDisplayPath(filePath, cwd, home);
-    const rank = String(index + 1).padStart(2, "0");
-    const isReviewNow = reviewNowSet.has(filePath);
     targets.push({
       filePath,
-      group: isReviewNow
-        ? `Review now · ${hasRecentFiles ? "last Pi turn" : "latest edited"}`
-        : `Earlier this session · ${earlierCount} ${earlierCount === 1 ? "file" : "files"}`,
+      group: `Relevant files · ${relevant.length}`,
+      label: `R${String(index + 1).padStart(2, "0")} · ${path.basename(filePath)} — ${displayPath}`,
+      display: {
+        title: path.basename(filePath),
+        scope: `Saved for review · ${displayPath}`
+      }
+    });
+  });
+  const files = uniqueAbsolutePaths(filePaths, cwd)
+    .filter((filePath) => !relevantSet.has(filePath));
+  const recentSet = new Set(uniqueAbsolutePaths(recentFilePaths, cwd));
+  const visibleCount = Math.min(files.length, Math.max(1, recentEditsLimit));
+  const olderCount = files.length - visibleCount;
+  files.forEach((filePath, index) => {
+    const displayPath = sessionDisplayPath(filePath, cwd, home);
+    const rank = String(index + 1).padStart(2, "0");
+    const isRecentEdit = index < visibleCount;
+    targets.push({
+      filePath,
+      group: isRecentEdit
+        ? "Recent edits · newest first"
+        : `Older this session · ${olderCount} ${olderCount === 1 ? "file" : "files"}`,
       label: `${rank} · ${path.basename(filePath)} — ${displayPath}`,
       display: {
         title: path.basename(filePath),
-        scope: isReviewNow && hasRecentFiles
+        scope: recentSet.has(filePath)
           ? `Edited last Pi turn · ${displayPath}`
-          : index === 0
-            ? `Most recently edited · ${displayPath}`
-          : `Edited #${index + 1} this session · ${displayPath}`
+          : isRecentEdit
+            ? `Edited earlier this session · ${displayPath}`
+            : `Older session edit · ${displayPath}`
       }
     });
   });

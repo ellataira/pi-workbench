@@ -50,6 +50,10 @@ import {
   reviewToolFilePaths,
   restoreReviewFileCandidates,
   sortSessionReviewFiles,
+  automaticReviewShortlistCandidates,
+  restoreReviewShortlist,
+  updateReviewShortlist,
+  REVIEW_SHORTLIST_ENTRY,
   REVIEW_SUGGESTIONS_ENTRY
 } from "../src/review-suggestions.mjs";
 
@@ -316,24 +320,88 @@ test("session review targets show explicit modes then session-only files by rece
       },
       {
         filePath: "/Users/ella/repo-a/docs/plan.md",
-        group: "Review now · last Pi turn",
+        group: "Recent edits · newest first",
         label: "01 · plan.md — docs/plan.md",
         display: { title: "plan.md", scope: "Edited last Pi turn · docs/plan.md" }
       },
       {
         filePath: "/Users/ella/repo-b/docs/plan.md",
-        group: "Review now · last Pi turn",
+        group: "Recent edits · newest first",
         label: "02 · plan.md — ~/repo-b/docs/plan.md",
         display: { title: "plan.md", scope: "Edited last Pi turn · ~/repo-b/docs/plan.md" }
       },
       {
         filePath: "/Users/ella/repo-a/README.md",
-        group: "Earlier this session · 1 file",
+        group: "Recent edits · newest first",
         label: "03 · README.md — README.md",
-        display: { title: "README.md", scope: "Edited #3 this session · README.md" }
+        display: { title: "README.md", scope: "Edited earlier this session · README.md" }
       }
     ]
   );
+});
+
+test("relevant files are pinned separately without scanning unrelated plans", () => {
+  const targets = buildSessionReviewTargets({
+    cwd: "/repo",
+    home: "/Users/ella",
+    filePaths: ["/repo/docs/migration-plan-plan.md", "/repo/src/controller.py"],
+    recentFilePaths: ["/repo/src/controller.py"],
+    relevantFilePaths: ["/repo/docs/migration-plan-plan.md"]
+  });
+  assert.deepEqual(targets.map(({ filePath, group }) => ({ filePath, group })), [
+    { filePath: "/repo/docs/migration-plan-plan.md", group: "Relevant files · 1" },
+    { filePath: "/repo/src/controller.py", group: "Recent edits · newest first" }
+  ]);
+});
+
+test("review shortlist persists only bounded local path metadata", () => {
+  const updated = updateReviewShortlist([], [
+    { filePath: "/repo/src/controller.py", reason: "primary-change", source: "automatic" },
+    { filePath: "/repo/docs/plan.md", reason: "task-plan", source: "agent" },
+    { filePath: "/outside/secret.md", reason: "task-plan", source: "agent" }
+  ], "/repo", { allowedRoot: "/repo", now: "2026-08-24T12:00:00.000Z" });
+  assert.deepEqual(updated.map(({ filePath, reason, source }) => ({ filePath, reason, source })), [
+    { filePath: "/repo/src/controller.py", reason: "primary-change", source: "automatic" },
+    { filePath: "/repo/docs/plan.md", reason: "task-plan", source: "agent" }
+  ]);
+  assert.deepEqual(
+    restoreReviewShortlist([{
+      type: "custom",
+      customType: REVIEW_SHORTLIST_ENTRY,
+      data: { cwd: "/repo", items: updated, prompt: "must not survive" }
+    }], "/repo", { allowedRoot: "/repo" }),
+    updated
+  );
+});
+
+test("automatic review relevance excludes noisy support files", () => {
+  assert.deepEqual(
+    automaticReviewShortlistCandidates([
+      "/repo/uv.lock",
+      "/repo/src/controller.py",
+      "/repo/src/controller_test.py",
+      "/repo/generated/schema.md",
+      "/repo/docs/campaign-plan.md"
+    ], "/repo"),
+    ["/repo/docs/campaign-plan.md", "/repo/src/controller.py", "/repo/src/controller_test.py"]
+  );
+});
+
+test("recent session edits span turns while older files stay collapsed", () => {
+  const files = Array.from({ length: 11 }, (_, index) => `/repo/file-${index}.md`);
+  const targets = buildSessionReviewTargets({
+    cwd: "/repo",
+    home: "/Users/ella",
+    filePaths: files,
+    recentFilePaths: [files[0], files[1]],
+    recentEditsLimit: 8
+  });
+  assert.deepEqual(targets.slice(0, 8).map((target) => target.group),
+    Array(8).fill("Recent edits · newest first"));
+  assert.deepEqual(targets.slice(8).map((target) => target.group),
+    Array(3).fill("Older this session · 3 files"));
+  assert.match(targets[0].display.scope, /Edited last Pi turn/);
+  assert.match(targets[2].display.scope, /Edited earlier this session/);
 });
 
 test("session review file recency uses modification time with stable ties", () => {
@@ -909,15 +977,15 @@ test("one review workspace navigates a large session file set from a sidebar", a
 
   const opened = await service.openFiles(filePaths.map((filePath, index) => ({
     filePath,
-    group: index < 2 ? "Review now · last Pi turn" : "Earlier this session · 10 files",
+    group: index < 8 ? "Recent edits · newest first" : "Older this session · 4 files",
     label: index === 0 ? "01 · values.yaml — charts/values.yaml" : undefined
   })));
   assert.equal(opened.count, 12);
   const html = await (await fetch(opened.url)).text();
   assert.match(html, /class="review-sidebar"/);
-  assert.match(html, /Review now · last Pi turn/);
+  assert.match(html, /Recent edits · newest first/);
   assert.match(html, /<details class="nav-group"/);
-  assert.match(html, /<summary>Earlier this session · 10 files<\/summary>/);
+  assert.match(html, /<summary>Older this session · 4 files<\/summary>/);
   assert.match(html, /@media\(max-width:800px\)/);
   assert.match(html, /class="nav-name">01 · values\.yaml<\/span><small>charts\/values\.yaml<\/small>/);
   assert.match(html, />file-11\.md<\/a>/);
@@ -986,6 +1054,8 @@ test("review command defaults to the cumulative session workspace and reuses a c
   assert.match(source, /reviewable file/);
   assert.match(source, /skipped/);
   assert.match(source, /recentFilePaths:/);
+  assert.match(source, /reviewShortlist/);
+  assert.match(source, /relevantFilePaths/);
   assert.match(surfaceSource, /startsWith\("Earlier this session"\)/);
   assert.match(source, /"HEAD\^\.\.HEAD"/);
   assert.match(source, /"origin\/main"/);
@@ -1586,6 +1656,7 @@ test("registers and documents the review surface without doc-copy drift", async 
   assert.match(quickstart, /`HEAD\^\.\.HEAD`/);
   assert.match(quickstart, /`origin\/main\.\.\.HEAD`/);
   assert.match(quickstart, /file sidebar/);
+  assert.match(quickstart, /\*\*Relevant files\*\*/);
   assert.match(quickstart, /Add to Pi/);
   assert.match(quickstart, /not the selected diff text/i);
   assert.equal(publicReadme, readme);

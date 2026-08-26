@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildAgentCenterActions,
   buildAgentChoices,
   buildWorktreeArguments,
   buildChildCommand,
@@ -16,9 +17,12 @@ import {
   formatChildProgressLines,
   normalizeChildProgress,
   orchestrationPolicy,
+  parseWorkspaceRefs,
   parseWorkspaceIdentifiers,
   requireOwnedWorkspace,
+  resolveCurrentChild,
   resolveOwnedChildSelector,
+  supervisorWorkspaceCandidates,
   shellQuote,
   waitForPath
 } from "../src/cmux-supervisor.mjs";
@@ -222,7 +226,29 @@ test("parses cmux workspace identifiers and restricts control to owned children"
   );
 });
 
-test("agent chooser presents persistent and lightweight paths with readable child state", () => {
+test("legacy children discover only non-child cmux workspaces as supervisor candidates", () => {
+  const listing = [
+    "workspace:1  Parent Pi",
+    "workspace:3  Notes",
+    "workspace:5  Pi · campaign-core",
+    "workspace:6  Pi · tests"
+  ].join("\n");
+  assert.deepEqual(parseWorkspaceRefs(listing), [
+    "workspace:1",
+    "workspace:3",
+    "workspace:5",
+    "workspace:6"
+  ]);
+  assert.deepEqual(
+    supervisorWorkspaceCandidates(listing, [
+      { identifiers: ["workspace:5"], sessionId: "current" },
+      { identifiers: ["workspace:6"], sessionId: "other" }
+    ], "workspace:5"),
+    ["workspace:1", "workspace:3"]
+  );
+});
+
+test("agent center uses plain language and keeps child management in the parent", () => {
   assert.deepEqual(
     buildAgentChoices([
       {
@@ -233,10 +259,45 @@ test("agent chooser presents persistent and lightweight paths with readable chil
       }
     ]),
     [
-      { action: "persistent", label: "Start persistent implementation agent…" },
-      { action: "background", label: "Fan out a lightweight task…" },
-      { action: "child", sessionId: "child-123", label: "Running · cache-safety · /repo" }
+      { action: "persistent", label: "Start implementation agent…" },
+      { action: "background", label: "Run parallel task…" },
+      { action: "child", sessionId: "child-123", label: "cache-safety · Running · /repo" }
     ]
+  );
+  assert.deepEqual(buildAgentCenterActions(), [
+    "Follow here",
+    "Send instruction…",
+    "Review changes…",
+    "Open child tab…",
+    "More…"
+  ]);
+});
+
+test("agent chooser uses lifecycle worktree paths instead of rendering undefined", () => {
+  assert.equal(
+    buildAgentChoices([{
+      sessionId: "child-123",
+      name: "campaign-core",
+      status: "dirty-active",
+      worktreePath: "/worktrees/campaign-core",
+      branch: "pi/campaign-core"
+    }]).at(-1).label,
+    "campaign-core · Dirty-active · /worktrees/campaign-core"
+  );
+});
+
+test("child identity falls back to its worktree when a legacy session id differs", () => {
+  const child = {
+    sessionId: "legacy-id",
+    name: "campaign-core",
+    cwd: "/worktrees/campaign-core"
+  };
+  assert.equal(
+    resolveCurrentChild([child], {
+      sessionId: "reloaded-id",
+      cwd: "/worktrees/campaign-core"
+    }),
+    child
   );
 });
 
@@ -261,7 +322,7 @@ test("child progress stores lifecycle metadata without prompts or terminal outpu
   );
 });
 
-test("parent progress lines identify the worker, phase, branch, activity, and focus action", () => {
+test("parent progress keeps navigation behind the agent center", () => {
   assert.deepEqual(
     formatChildProgressLines(
       [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core", createdAt: "2026-08-21T11:00:00.000Z" }],
@@ -275,19 +336,18 @@ test("parent progress lines identify the worker, phase, branch, activity, and fo
       { now: Date.parse("2026-08-21T12:00:00.000Z") }
     ),
     [
-      "Agent map · supervisor (this tab) · 1 active child",
+      "Agent Center · supervisor · 1 active agent",
       "└─ campaign-core · working: apply_patch · active now",
-      "   open: /agents focus campaign-core · follow: /agents watch campaign-core",
       "   pi/campaign-core",
-      "Child tabs return here with /agents parent"
+      "   manage: /agents (stays in this tab)"
     ]
   );
 });
 
 test("child identity widget explains how to return to the supervisor", () => {
   assert.deepEqual(formatChildIdentityLines("campaign-core"), [
-    "Agent map · child: campaign-core (this tab)",
-    "Return to supervisor · /agents parent",
+    "Agent Center · campaign-core (worker tab)",
+    "Run /agents to return to the supervisor",
     "The supervisor follows a bounded live tail automatically"
   ]);
 });
@@ -399,6 +459,13 @@ test("supervisor exposes one agents command instead of implementation-detail ali
   assert.match(source, /action === "watch"/);
   assert.match(source, /action === "parent"/);
   assert.match(source, /PI_CMUX_SUPERVISOR_WORKSPACE_ID/);
+  assert.match(source, /openChildAgentsChooser/);
+  assert.match(source, /Agent Center · .*stays in this tab/);
+  assert.match(source, /selected === "Follow here"/);
+  assert.match(source, /selected === "Send instruction…"/);
+  assert.match(source, /selected === "Review changes…"/);
+  assert.match(source, /selected === "Open child tab…"/);
+  assert.match(source, /Run \/agents to manage it without leaving this tab/);
   assert.match(source, /importFreshSourceModule/);
   assert.doesNotMatch(source, /from "\.\.\/src\/cmux-supervisor\.mjs"/);
 });

@@ -64,13 +64,17 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		buildReviewDisplayMetadata,
 		buildSessionReviewTargets: buildSessionTargetList,
 		filterReviewableSessionFileRecords,
+		automaticReviewShortlistCandidates,
 		mergeSessionReviewFiles,
 		parseReviewPathArgument,
 		restoreReviewFileCandidates,
 		restoreRecentReviewFileCandidates,
 		restoreRecentToolFileCandidates,
 		reviewToolFilePaths,
+		restoreReviewShortlist,
 		sortSessionReviewFiles,
+		updateReviewShortlist,
+		REVIEW_SHORTLIST_ENTRY,
 		REVIEW_SUGGESTIONS_ENTRY,
 	} = await importFreshSourceModule(reviewSuggestionsPath);
 	const reviewCmuxPath = fileURLToPath(
@@ -111,6 +115,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	let recentChangedFiles: string[] = [];
 	const sessionBaselines = new Map<string, any>();
 	let sessionChangedFiles: string[] = [];
+	let reviewShortlist: Array<{ filePath: string; reason: string; source: string; addedAt: string }> = [];
 	let reviewWindowId = "";
 	let reviewSurfaceId = "";
 	let turnSequence = 0;
@@ -379,6 +384,72 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		};
 	}
 
+	async function saveReviewShortlist(next: typeof reviewShortlist, ctx: any) {
+		if (JSON.stringify(next) === JSON.stringify(reviewShortlist)) return false;
+		reviewShortlist = next;
+		pi.appendEntry(REVIEW_SHORTLIST_ENTRY, {
+			cwd: path.resolve(ctx.cwd),
+			items: reviewShortlist,
+		});
+		if (reviewSurfaceId && service) {
+			const { targets } = await buildSessionReviewTargets(ctx);
+			if (targets.length) await service.setWorkspace(targets, { workspaceKey: sessionId });
+		}
+		return true;
+	}
+
+	async function pinReviewFiles(
+		filePaths: string[],
+		ctx: any,
+		{ reason = "agent-selected", source = "agent" } = {},
+	) {
+		const resolved = filePaths.map((filePath) =>
+			path.resolve(ctx.cwd, parseReviewPathArgument(filePath)),
+		);
+		const status = await inspectSessionReviewFiles(resolved);
+		if (!status.currentFiles.length) {
+			throw new Error("No supplied paths are reviewable local files");
+		}
+		const reviewable = status.currentFiles.slice(0, 8);
+		const next = updateReviewShortlist(
+			reviewShortlist,
+			reviewable.map((filePath: string) => ({ filePath, reason, source })),
+			ctx.cwd,
+			{ allowedRoot: homedir(), limit: 8 },
+		);
+		await saveReviewShortlist(next, ctx);
+		return reviewable;
+	}
+
+	async function unpinReviewFile(filePath: string, ctx: any) {
+		const target = path.resolve(ctx.cwd, parseReviewPathArgument(filePath));
+		const next = reviewShortlist.filter((item) => item.filePath !== target);
+		const removed = next.length !== reviewShortlist.length;
+		await saveReviewShortlist(next, ctx);
+		return removed;
+	}
+
+	async function rememberAutomaticReviewFiles(filePaths: string[], ctx: any) {
+		const candidates = automaticReviewShortlistCandidates(filePaths, ctx.cwd);
+		if (!candidates.length) return;
+		const fixed = reviewShortlist.filter((item) => item.source !== "automatic");
+		const automatic = updateReviewShortlist(
+			reviewShortlist.filter((item) => item.source === "automatic"),
+			candidates.map((filePath: string) => ({
+				filePath,
+				reason: "primary-change",
+				source: "automatic",
+			})),
+			ctx.cwd,
+			{ allowedRoot: homedir(), limit: Math.max(1, 8 - fixed.length) },
+		);
+		const next = updateReviewShortlist([], [...fixed, ...automatic], ctx.cwd, {
+			allowedRoot: homedir(),
+			limit: 8,
+		});
+		await saveReviewShortlist(next, ctx);
+	}
+
 	function reviewWidgetLines(reviewableCount: number, skippedCount: number) {
 		return [
 			"Session review ready — run /review",
@@ -391,6 +462,9 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	async function buildSessionReviewTargets(ctx: any) {
 		const fileStatus = await inspectSessionReviewFiles();
 		const recentFileStatus = await inspectSessionReviewFiles(recentChangedFiles);
+		const relevantStatus = await inspectSessionReviewFiles(
+			reviewShortlist.map((item) => item.filePath),
+		);
 		const recentMode = recentDiffPath
 			? {
 				key: "recent",
@@ -436,15 +510,16 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			home: homedir(),
 			filePaths: fileStatus.currentFiles,
 			recentFilePaths: recentFileStatus.currentFiles,
+			relevantFilePaths: relevantStatus.currentFiles,
 			modes: [recentMode, ...gitModes],
 		});
-		return { targets, ...fileStatus };
+		return { targets, relevantCount: relevantStatus.currentFiles.length, ...fileStatus };
 	}
 
 	async function openSessionReview(ctx: any) {
 		latestContext = ctx;
 		await refreshSessionChanges(ctx);
-		const { targets, currentFiles, skippedCount } = await buildSessionReviewTargets(ctx);
+		const { targets, currentFiles, skippedCount, relevantCount } = await buildSessionReviewTargets(ctx);
 		if (!targets.length) {
 			ctx.ui.notify("This session has no reviewable file changes yet.", "info");
 			return [];
@@ -452,7 +527,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		await reviewFiles(targets, ctx, { workspaceKey: sessionId });
 		recordReviewOpen("session");
 		ctx.ui.notify(
-			`Opened session review workspace · ${currentFiles.length} reviewable file${currentFiles.length === 1 ? "" : "s"}${
+			`Opened session review workspace · ${currentFiles.length} session file${currentFiles.length === 1 ? "" : "s"} · ${relevantCount} relevant file${relevantCount === 1 ? "" : "s"}${
 				skippedCount ? ` · ${skippedCount} skipped` : ""
 			}`,
 			"info",
@@ -553,6 +628,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		}
 		if (!filePath?.trim()) return;
 		const reviewed = await reviewFile(filePath, ctx);
+		await pinReviewFiles([filePath], ctx, { reason: "user-pinned", source: "user" });
 		recordReviewOpen("file");
 		ctx.ui.notify(`Opened review UI for ${reviewed}`, "info");
 	}
@@ -600,7 +676,22 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 					await openGitReview(command.slice(3).trim(), ctx);
 					return;
 				}
+				if (command.startsWith("pin ")) {
+					const pinned = await pinReviewFiles(
+						[command.slice(4).trim()],
+						ctx,
+						{ reason: "user-pinned", source: "user" },
+					);
+					ctx.ui.notify(`Pinned for review · ${pinned[0]}`, "info");
+					return;
+				}
+				if (command.startsWith("unpin ")) {
+					await unpinReviewFile(command.slice(6).trim(), ctx);
+					ctx.ui.notify("Removed from relevant review files.", "info");
+					return;
+				}
 				const reviewed = await reviewFile(command, ctx);
+				await pinReviewFiles([command], ctx, { reason: "user-pinned", source: "user" });
 				recordReviewOpen("file");
 				ctx.ui.notify(`Opened review UI for ${reviewed}`, "info");
 			} catch (error) {
@@ -613,13 +704,14 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		name: "review_open",
 		label: "Open review",
 		description:
-			"Open the review UI directly when the user asks to review files or a diff. Session mode opens the cumulative session workspace in one reusable popout. File mode accepts up to 100 paths in one lazy navigable set; Git mode accepts staged, unstaged, a base ref, or an exact revision range; recent mode opens the immediately preceding Pi turn.",
+			"Open the review UI directly when the user asks to review files or a diff, or save a bounded relevant-file shortlist with mode=pin. Session mode opens the cumulative session workspace in one reusable popout. File mode accepts up to 100 paths in one lazy navigable set; Git mode accepts staged, unstaged, a base ref, or an exact revision range; recent mode opens the immediately preceding Pi turn.",
 		parameters: Type.Object({
 			mode: Type.Union([
 				Type.Literal("files"),
 				Type.Literal("session"),
 				Type.Literal("git"),
 				Type.Literal("recent"),
+				Type.Literal("pin"),
 			]),
 			files: Type.Optional(
 				Type.Array(Type.String({ maxLength: 1200 }), {
@@ -635,9 +727,19 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			let opened: string[] = [];
 			if (params.mode === "session") {
 				opened = await openSessionReview(ctx);
+			} else if (params.mode === "pin") {
+				if (!params.files?.length) throw new Error("pin mode requires at least one path");
+				opened = await pinReviewFiles(params.files, ctx, {
+					reason: "agent-selected",
+					source: "agent",
+				});
 			} else if (params.mode === "files") {
 				if (!params.files?.length) throw new Error("files mode requires at least one path");
 				opened = await reviewFiles(params.files, ctx);
+				await pinReviewFiles(params.files, ctx, {
+					reason: "agent-selected",
+					source: "agent",
+				});
 				if (opened.length) recordReviewOpen("files");
 			} else if (params.mode === "git") {
 				const diffPath = await openGitReview(
@@ -655,7 +757,9 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 				content: [{
 					type: "text",
 					text: opened.length
-						? `Opened review UI for ${opened.length} target${opened.length === 1 ? "" : "s"}.`
+						? params.mode === "pin"
+							? `Saved ${opened.length} relevant review file${opened.length === 1 ? "" : "s"}.`
+							: `Opened review UI for ${opened.length} target${opened.length === 1 ? "" : "s"}.`
 						: "No reviewable content was available.",
 				}],
 				details,
@@ -667,6 +771,11 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		latestContext = ctx;
 		sessionId = ctx.sessionManager.getSessionId();
 		const recoveryState = reviewRecoveryStates.get(sessionId);
+		reviewShortlist = restoreReviewShortlist(
+			ctx.sessionManager.getBranch(),
+			ctx.cwd,
+			{ limit: 8, allowedRoot: homedir() },
+		);
 		sessionChangedFiles = restoreReviewFileCandidates(
 			ctx.sessionManager.getBranch(),
 			ctx.cwd,
@@ -773,6 +882,10 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("before_agent_start", async (event) => ({
+		systemPrompt: `${event.systemPrompt}\n\nREVIEW RELEVANCE\nWhen a task has a small set of files the user will likely want to inspect, call review_open with mode=pin once and 1-8 paths. Pin primary implementation files, task plans, and user-facing artifacts. Do not pin lockfiles, generated output, vendored files, or incidental fixtures.`,
+	}));
+
 	pi.on("tool_execution_start", async (event, ctx) => {
 		for (const changedArgument of reviewToolFilePaths(event.toolName, event.args)) {
 			try {
@@ -817,6 +930,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 			ctx.cwd,
 			{ limit: 100, allowedRoot: homedir() },
 		);
+		await rememberAutomaticReviewFiles(recentChangedFiles, ctx);
 		pi.appendEntry(REVIEW_SUGGESTIONS_ENTRY, {
 			cwd: path.resolve(ctx.cwd),
 			files: sessionChangedFiles.slice(0, 100),
@@ -874,6 +988,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		recentChangedFiles = [];
 		recentBaselines.clear();
 		sessionChangedFiles = [];
+		reviewShortlist = [];
 		sessionBaselines.clear();
 		reviewWindowId = "";
 		reviewSurfaceId = "";

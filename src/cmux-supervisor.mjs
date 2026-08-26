@@ -45,6 +45,19 @@ export function parseWorkspaceIdentifiers(output) {
   return identifiers;
 }
 
+export function parseWorkspaceRefs(output) {
+  return [...new Set(String(output ?? "").match(/\bworkspace:\d+\b/g) ?? [])];
+}
+
+export function supervisorWorkspaceCandidates(output, children, currentWorkspace) {
+  const childWorkspaces = new Set(
+    (Array.isArray(children) ? children : [])
+      .flatMap((child) => Array.isArray(child.identifiers) ? child.identifiers : [])
+  );
+  if (currentWorkspace) childWorkspaces.add(currentWorkspace);
+  return parseWorkspaceRefs(output).filter((workspace) => !childWorkspaces.has(workspace));
+}
+
 export function requireOwnedWorkspace(entries, workspace) {
   const entry = entries.find((candidate) => candidate.identifiers?.includes(workspace));
   if (!entry) {
@@ -133,7 +146,7 @@ export function formatChildProgressLines(
     .slice(0, Math.max(1, limit));
   if (!visible.length) return [];
   const lines = [
-    `Agent map · supervisor (this tab) · ${visible.length} active child${visible.length === 1 ? "" : "ren"}`
+    `Agent Center · supervisor · ${visible.length} active agent${visible.length === 1 ? "" : "s"}`
   ];
   for (const [index, { child, progress }] of visible.entries()) {
     const activity = progress?.updatedAt
@@ -141,20 +154,19 @@ export function formatChildProgressLines(
       : "startup pending";
     const tree = index === visible.length - 1 ? "└─" : "├─";
     lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)} · ${activity}`);
-    lines.push(`   open: /agents focus ${child.name} · follow: /agents watch ${child.name}`);
     lines.push(`   ${child.branch || child.cwd || "isolated workspace"}`);
     for (const line of screenTailBySessionId.get(child.sessionId) ?? []) {
       lines.push(`   ↳ ${line}`);
     }
   }
-  lines.push("Child tabs return here with /agents parent");
+  lines.push("   manage: /agents (stays in this tab)");
   return lines;
 }
 
 export function formatChildIdentityLines(name = "delegated agent") {
   return [
-    `Agent map · child: ${String(name).trim() || "delegated agent"} (this tab)`,
-    "Return to supervisor · /agents parent",
+    `Agent Center · ${String(name).trim() || "delegated agent"} (worker tab)`,
+    "Run /agents to return to the supervisor",
     "The supervisor follows a bounded live tail automatically"
   ];
 }
@@ -172,6 +184,13 @@ export function resolveOwnedChildSelector(children, selector) {
   if (matches.length === 1) return matches[0];
   if (matches.length > 1) throw new Error(`Child selector is ambiguous: ${value}`);
   throw new Error(`Unknown owned child: ${value}`);
+}
+
+export function resolveCurrentChild(children, { sessionId, cwd } = {}) {
+  const entries = Array.isArray(children) ? children : [];
+  return entries.find((child) => child.sessionId === sessionId)
+    ?? entries.find((child) => [child.cwd, child.worktreePath].includes(cwd))
+    ?? null;
 }
 
 export function buildChildCommand({ includeTask = true } = {}) {
@@ -269,17 +288,27 @@ export function buildAgentChoices(children = []) {
   return [
     {
       action: "persistent",
-      label: "Start persistent implementation agent…"
+      label: "Start implementation agent…"
     },
     {
       action: "background",
-      label: "Fan out a lightweight task…"
+      label: "Run parallel task…"
     },
     ...children.map((child) => ({
       action: "child",
       sessionId: child.sessionId,
-      label: `${String(child.status ?? "unknown").replace(/^./, (value) => value.toUpperCase())} · ${child.name} · ${child.cwd}`
+      label: `${child.name} · ${String(child.status ?? "unknown").replace(/^./, (value) => value.toUpperCase())} · ${child.worktreePath || child.cwd || child.branch || "workspace unavailable"}`
     }))
+  ];
+}
+
+export function buildAgentCenterActions() {
+  return [
+    "Follow here",
+    "Send instruction…",
+    "Review changes…",
+    "Open child tab…",
+    "More…"
   ];
 }
 
@@ -292,7 +321,7 @@ ORCHESTRATION POLICY
 - Give each implementing child an isolated worktree and keep one writer per checkout.
 - Cap ordinary fan-out at four concurrent children and one level of nesting.
 - Give substantial children a concrete deliverable and verification contract; journal them as linked child sessions.
-- Before delegating, tell the user which named child will work and why. After launch, report its branch/worktree plus /agents focus <name> for live output and /agents status <name> for metadata-only progress.
+- Before delegating, tell the user which named child will work and why. After launch, report its branch/worktree and say that /agents manages it without leaving the supervisor tab.
 - Never leave the parent looking idle while a child works: keep the delegated-work widget visible and summarize child completion or failure promptly.
 - Never delegate merely to avoid doing a straightforward task.
 - When the user explicitly asks to start work in a /fork, create a detached fork in a new cmux tab; never substitute a background subagent.

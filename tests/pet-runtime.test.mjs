@@ -188,6 +188,18 @@ test("native pet applies the same bounded inbox attention window", async () => {
   assert.match(source, /inboxItemRequiresAttention/);
 });
 
+test("native pet acknowledges stale waiting, failed, and completed session states", async () => {
+  const source = await readFile(
+    new URL("../pet-app/Sources/PiPet/main.swift", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /phaseRequiresAcknowledgement/);
+  assert.match(source, /acknowledgedAttentionStates/);
+  assert.match(source, /!acknowledgedAttentionStates\.contains\(snapshot\.completionKey\)/);
+  assert.match(source, /acknowledgedAttentionStates\.insert\(selected\.completionKey\)/);
+  assert.match(source, /withTimeInterval:\s*0\.5/);
+});
+
 test("pet snapshots are atomically stored as owner-only JSON", async () => {
   const runtimeDir = await mkdtemp(path.join(tmpdir(), "pi-pet-runtime-"));
   try {

@@ -87,8 +87,9 @@ Inside Pi:
 - `/workspace` opens a recent-repository chooser. `/workspace show` reports the
   active and previous repository; `/workspace back` returns to the prior repository. Workspace switching
   requires a persisted Pi session and a target inside a Git repository.
-- `/agents` is the single supervisor entry point. It can fan out a lightweight
-  task, create an implementing agent, or manage an existing child.
+- `/agents` opens the **Agent Center** in the current tab. It can run a parallel
+  task, create an implementation agent, or manage an existing agent without
+  changing cmux tabs.
 - `/agents persistent <task>` creates an isolated Git worktree and starts a persistent
   Pi-native child in a new, unfocused cmux workspace. Enter it whenever you
   want to chat with or steer the child. The supervisor waits for the new shell
@@ -99,16 +100,21 @@ Inside Pi:
   recover the session, produce a bounded reviewable patch, or remove only a
   clean merged child.
 - Persistent implementations remain visible in the parent through a live
-  **Agent map** widget. It names the child, branch, current lifecycle phase
+  **Agent Center** widget. It names the child, branch, current lifecycle phase
   or tool, last heartbeat, and a redacted three-line tail from the child's cmux
-  screen. The newest child is followed automatically; `/agents watch <name>`
-  switches the inline tail and `/agents watch off` hides it. Use `/agents status
-  [name]` for metadata on demand. `/agents focus <name>` is optional and only
-  needed for direct steering or full scrollback. The live tail is UI-only and is
+  screen. The newest child is followed automatically. Selecting an agent in
+  `/agents` offers **Follow here**, **Send instruction**, **Review changes**, and
+  **Open child tab**. Only the explicitly named **Open child tab** action switches
+  your current tab. The live tail is UI-only and is
   never written to the parent session, journal, progress files, or transcripts.
-- A child tab identifies itself and keeps `Return to supervisor · /agents
-  parent` on screen. The parent map shows `open` and `follow` commands beside
-  every child, so navigation does not depend on remembering cmux tabs.
+- A child tab identifies itself and keeps `Run /agents to return to the
+  supervisor` on screen. Legacy
+  children without a recorded parent discover non-child workspaces, ask once
+  when the choice is ambiguous, and remember the selected supervisor.
+- Bare `/agents` is context-sensitive: supervisors see the Agent Center, while
+  children see a short menu with **Return to Agent Center** first. Lifecycle
+  rows use the child worktree path and never show
+  an `undefined` location.
 - Supervisor helper modules are loaded from fresh source during `/reload`, so a
   running Pi cannot retain an older helper export set after an extension update.
 - Ask the parent to focus, message, or interrupt a named child; it uses the
@@ -316,8 +322,10 @@ Space, and is allowed alongside full-screen apps.
 - Dragging right or left uses the matching directional movement row.
 - Lifecycle animations follow Codex playback: the state row plays three times,
   then settles into the slower idle loop. macOS Reduce Motion shows one frame.
-- Click Paddington to focus the originating cmux workspace. A completed state
-  is acknowledged by the same click.
+- Click Paddington to focus the originating cmux workspace. Waiting, failed,
+  and completed session states are acknowledged by the same click, so an old
+  high-priority state cannot pin Paddington indefinitely; a new snapshot may
+  alert again.
 - New inbox failures, approvals, and completions take priority for 15 minutes.
   After that, they remain in `/inbox` but stop pinning Paddington above live Pi
   activity; opening `/inbox` is the durable follow-up path.
@@ -338,6 +346,8 @@ escape as unhandled promise rejections or terminate Pi.
 
 The companion aggregates all live Pi parents and children. Attention priority
 is failure, waiting for input, completion, review, active work, then idle.
+It checks snapshots twice per second; acknowledgment fixes stale priority
+without increasing the polling or filesystem-I/O rate.
 Click-to-focus does not grant the desktop app direct cmux socket access. The
 companion writes a fixed-field session focus request, and only the matching Pi
 process already authorized inside cmux may execute it.
@@ -363,8 +373,13 @@ npm run build:pet
 - `/review` is the single review entry point. With no argument it opens or
   focuses one cumulative session-review popout. **Review modes** switches among
   the exact last Pi turn, staged changes, `HEAD^..HEAD`, and
-  `origin/main...HEAD`. **Session files · newest first** contains only files
-  changed during this Pi session, ordered by modification time. Every entry
+  `origin/main...HEAD`. **Relevant files** contains a persisted shortlist of up
+  to eight task-relevant paths selected by Pi or pinned with `/review pin
+  <path>`. It stores path metadata only and never scans every plan-like file in
+  the repository. `/review unpin <path>` removes an irrelevant suggestion.
+  **Recent edits · newest first** shows the eight newest files changed across
+  this Pi session, not just the last turn. Remaining session files stay under
+  collapsed **Older this session**. Every entry
   shows its filename and repository-relative or home-relative path; selecting a
   Markdown file opens the rendered document rather than a diff. Explicit
   `/review <path>` remains available for intentionally opening another file.
@@ -404,9 +419,10 @@ npm run build:pet
   to review files or a diff, Pi opens it directly instead of returning paths
   and asking you to type `/review`. Bare `/review` opens one dedicated cmux
   popout for the session and later calls reuse that window. Its left sidebar
-  keeps the review modes visible, recommends at most five files from the last
-  Pi turn under **Review now**, and collapses the remaining session-only files
-  under **Earlier this session**. The combined **Last Pi turn** diff opens first,
+  keeps the review modes visible, shows the bounded task shortlist under
+  **Relevant files**, shows the eight newest cross-turn session files under **Recent
+  edits**, and collapses the rest under **Older this session**. The combined
+  **Last Pi turn** diff opens first,
   so the intended starting point is explicit. The workspace still retains up to
   100 session files, but file contents load only when selected. If `/workspace`
   visits more than one repository, the sidebar

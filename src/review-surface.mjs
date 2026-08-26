@@ -773,7 +773,7 @@ function reviewPageHtml(state, scriptNonce) {
   };
   const navigationHtml = navigationGroups.map(({ group, items }) => {
     const links = items.map((item) => navigationLinkHtml(item, group)).join("");
-    if (group.startsWith("Earlier this session")) {
+    if (group.startsWith("Older this session") || group.startsWith("Earlier this session")) {
       const opened = items.some((item) => item.current) ? " open" : "";
       return `<details class="nav-group"${opened}><summary>${escapeHtml(group)}</summary>${links}</details>`;
     }
@@ -914,7 +914,7 @@ function renderWorkspaceNavigation(navigation){
   const signature=navigation.map((item)=>(item.group||"")+"|"+item.label+"|"+item.url+"|"+item.current).join("\\n");
   if(reviewSidebar.dataset.signature===signature)return;
   reviewSidebar.dataset.signature=signature;reviewSidebar.innerHTML="";
-  let group="",container=reviewSidebar;for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;if(group.startsWith("Earlier this session")){const details=document.createElement("details");details.className="nav-group";details.open=navigation.some((candidate)=>candidate.current&&(candidate.group||"Session files")===group);const summary=document.createElement("summary");summary.textContent=group;details.appendChild(summary);reviewSidebar.appendChild(details);container=details}else{const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading);container=reviewSidebar}}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}container.appendChild(link)}
+  let group="",container=reviewSidebar;for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;if(group.startsWith("Older this session")||group.startsWith("Earlier this session")){const details=document.createElement("details");details.className="nav-group";details.open=navigation.some((candidate)=>candidate.current&&(candidate.group||"Session files")===group);const summary=document.createElement("summary");summary.textContent=group;details.appendChild(summary);reviewSidebar.appendChild(details);container=details}else{const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading);container=reviewSidebar}}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}container.appendChild(link)}
 }
 async function checkWorkspaceNavigation(){
   if(document.hidden||!reviewSidebar)return;

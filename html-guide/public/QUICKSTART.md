@@ -41,10 +41,10 @@ changed.
 
 | Entry point | Interactive behavior | Useful direct forms |
 |---|---|---|
-| `/review` | Open or focus the cumulative session review popout | `/review choose`, `/review <path>`, `/review git`, `/review git staged`, `/review git <base>` |
+| `/review` | Open or focus the cumulative session review popout | `/review choose`, `/review <path>`, `/review pin <path>`, `/review unpin <path>`, `/review git`, `/review git staged`, `/review git <base>` |
 | `/rewind` | Choose an earlier user message, restore it to the editor, and preserve the abandoned branch | `/tree` for the complete native tree |
 | `/copy` | Choose a fenced or inline CLI command from the latest response, or the entire response | `/copy-command` is the vendor-neutral fallback |
-| `/agents` | Choose lightweight fan-out, persistent implementation, or an existing agent | `/agents persistent <task>`, `/agents background <task>`, `/agents list`, `/agents recover <id>` |
+| `/agents` | Open the Agent Center without changing tabs | Choose **Run parallel task**, **Start implementation agent**, or an existing agent |
 | `/memory` | Inspect status or choose checkpoint, daily review, cleanup, or integrity work | `/checkpoint`, `/distill`, `/memory audit`, `/memory cleanup`, `/memory integrity` |
 | `/inbox` | Select an action item, focus its cmux workspace, or acknowledge it | `/inbox list`, `/inbox clear completed`, `/inbox clear stale` |
 | `/workspace` | Choose a recent repository or enter another path | `/workspace <path>`, `/workspace back`, `/workspace show` |
@@ -384,44 +384,54 @@ The supervisor:
 `/reload` reloads the supervisor's helper modules from fresh source as well as
 the extension, preventing mixed old/new module exports during local upgrades.
 
-The parent immediately shows an **Agent map** widget with the child name,
+The parent immediately shows an **Agent Center** widget with the child name,
 branch, lifecycle phase or active tool, heartbeat age, and a redacted three-line
 tail of its visible cmux output. The newest child is followed automatically, so
 you do not need to leave the parent just to understand what is happening. The
 tail is bounded, transient UI state: it is never appended to the Pi session,
 journal, progress files, or transcripts. The child separately writes only fixed
-progress metadata every five seconds. Use:
+progress metadata every five seconds. Run `/agents`, then select the agent:
 
 ```text
-/agents status campaign-core
-/agents watch campaign-core
-/agents watch off
-/agents focus campaign-core
+Follow here
+Send instruction…
+Review changes…
+Open child tab…
+More…
 ```
 
-`status` reports lifecycle metadata. `watch` chooses which child's bounded tail
-appears in the parent. `focus` is optional: it opens the full child Pi only when
-you want direct conversation, steering, or scrollback. Names and unique
-session-ID prefixes both work. Existing children can be watched immediately;
+The first three actions stay in the supervisor. **Review changes** prepares a
+bounded patch and places the review command in the editor. Only **Open child
+tab** switches your current tab. Recovery, interruption, patch preparation, and cleanup
+live under **More**. Existing children can be followed immediately;
 children created before heartbeat support still need one `/reload` only if you
 also want their structured lifecycle phase.
+
+For a child created before supervisor routing was recorded, `/agents parent`
+discovers the non-child cmux workspaces. If more than one could be the parent,
+Pi shows bounded screen previews and asks once; the selected workspace is saved
+for immediate returns afterward.
+
+Bare `/agents` adapts to the current role. In the supervisor it opens the Agent
+Center and never changes tabs by itself. In a child it shows only **Return to
+Agent Center** and **Show this child’s routing details**. Child rows use their
+worktree paths, so the chooser never renders an `undefined` location.
 
 The on-screen hierarchy is explicit:
 
 ```text
-Agent map · supervisor (this tab) · 1 active child
+Agent Center · supervisor · 1 active agent
 └─ campaign-core · working: apply_patch · active now
-   open: /agents focus campaign-core · follow: /agents watch campaign-core
    pi/campaign-core
    ↳ Running focused controller tests
-Child tabs return here with /agents parent
+   manage: /agents (stays in this tab)
 ```
 
 Inside the child, it changes to:
 
 ```text
-Agent map · child: campaign-core (this tab)
-Return to supervisor · /agents parent
+Agent Center · campaign-core (worker tab)
+Run /agents to return to the supervisor
 The supervisor follows a bounded live tail automatically
 ```
 
@@ -430,9 +440,9 @@ the child Pi extension reports `session_start`; failed or timed-out launches
 close their workspace and remove the newly created worktree instead of leaving
 an apparently active child behind.
 
-Use the map's `/agents focus <name>` command to enter a child and `/agents
-parent` to return. It is a normal Pi session: chat with it, steer it, use
-`/tree`, and resume it later.
+Use **Open child tab** only when you want the full child session. It is a normal
+Pi session: chat with it, steer it, use `/tree`, and resume it later. Run
+`/agents` there and choose **Return to Agent Center** when finished.
 
 ```text
 /agents list
@@ -916,9 +926,11 @@ From Pi:
 
 Running `/review` with no argument opens the cumulative session review workspace
 in a dedicated cmux popout. Later `/review` calls focus and navigate that same
-window instead of creating more tabs. The file sidebar contains only paths
-changed during the current Pi session, up to 100, ordered by filesystem
-modification time with the newest first, and survives `/reload`.
+window instead of creating more tabs. The file sidebar contains paths changed
+during the current Pi session, up to 100, plus a separate **Relevant files**
+shortlist of up to eight paths. The shortlist is selected from substantive work
+or explicitly pinned; it does not scan every plan-like Markdown file. It stores
+only path, reason, source, and timestamp metadata and survives `/reload`.
 Pi verifies that the cmux browser surface loaded the exact review URL before it
 keeps the popout. An incomplete window is closed automatically and the review
 opens in the default browser instead.
@@ -932,7 +944,12 @@ them with both filename and repository-relative or home-relative path.
 The sidebar starts with **Review modes**, which toggles among **Last Pi turn**,
 **Staged**, **Latest commit** (`HEAD^..HEAD`), and **Branch vs main**
 (`origin/main...HEAD`). Empty or unavailable Git modes say so explicitly.
-**Session files · newest first** follows those controls. Selecting a Markdown
+**Relevant files** follows those controls. Pi may save primary implementation
+files, the active task plan, and user-facing artifacts. Lockfiles, generated
+output, vendor trees, fixtures, snapshots, and artifacts are excluded from
+automatic suggestions. Use `/review pin <path>` or `/review unpin <path>` to
+override it. **Recent edits · newest first** follows the shortlist and shows the eight newest session files across multiple turns;
+remaining files stay collapsed under **Older this session**. Selecting a Markdown
 file opens its plain rendered document rather than a diff; Markdown remains
 editable. Supported code and config
 formats are read-only, and inline comments remain available in Markdown and diff
@@ -1058,9 +1075,10 @@ Session review ready — run /review
 The session list accumulates across turns rather than being replaced by the
 next turn, and touching an existing entry moves it to its modification-time
 position. Repository Git status never backfills unrelated files into this list.
-The sidebar keeps **Review modes** visible, shows at most five directly edited
-files from the latest turn under **Review now**, and hides the rest behind the
-collapsed **Earlier this session · N files** section. **Last Pi turn** is the
+The sidebar keeps **Review modes** visible, shows the bounded task-specific
+**Relevant files** group, shows eight cross-turn files under **Recent edits · newest
+first**, and hides the rest behind the collapsed **Older this session · N
+files** section. **Last Pi turn** is the
 default opening view. Selecting an older file automatically expands its section.
 If a turn makes no changes, **Last Pi turn** shows an explicit empty state rather
 than older work. Turn snapshots are bounded to
@@ -1145,8 +1163,12 @@ is transparent, draggable, always on top, visible across Spaces, and allowed
 beside full-screen apps. It starts with Pi, shows aggregate parent/subagent
 state plus the persistent action inbox. New completion, approval, blocked, and
 failed events take priority for 15 minutes; afterward they remain in `/inbox`
-but stop hiding live Pi lifecycle activity. Clicking acknowledges the selected inbox item and focuses the
-originating cmux workspace when routing metadata exists; right-clicking offers
+but stop hiding live Pi lifecycle activity. Clicking acknowledges the selected
+inbox item or waiting, failed, or completed session snapshot and focuses the
+originating cmux workspace when routing metadata exists. A later snapshot can
+alert again; stale acknowledged states cannot remain pinned. The companion
+checks for state changes twice per second without adding a faster polling loop.
+Right-clicking offers
 hide and quit. Lifecycle snapshots use unique atomic temporary files, refresh
 their runtime implementation on `/reload`, and await subagent writes so a pet
 filesystem failure cannot terminate Pi.
@@ -1272,9 +1294,9 @@ In addition to the commands described above:
 | `/trust` | Manage directory trust |
 | `/reload` | Reload extensions, skills, prompts, and themes |
 | `/workspace [path|back|show]` | Choose, show, or switch the active Git repository while preserving the conversation |
-| `/review [choose|path|git [staged|base]]` | Open the cumulative session review workspace or an advanced file/Git view |
+| `/review [choose|path|pin path|unpin path|git [staged|base]]` | Open the cumulative session review workspace, manage its relevant-file shortlist, or open an advanced file/Git view |
 | `/pair [start|reconnect|status|stop]` | Pair through, recover, inspect, or stop a neighboring terminal where you run every command |
-| `/agents [persistent|background|list|status|focus|recover|patch|cleanup]` | Guide or directly manage background and persistent agents; `status` is metadata-only and `focus` opens live output |
+| `/agents` | Open the parent-stable Agent Center; advanced direct forms remain available for compatibility |
 | `/memory [status|checkpoint|distill|audit|cleanup|integrity|receipts]` | Guide or directly manage memory and retention |
 | `/hotkeys` | Show keybindings |
 | `/changelog` | Show release changes |
