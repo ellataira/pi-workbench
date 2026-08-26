@@ -433,6 +433,7 @@ export default function Home() {
         <nav className="source-links" aria-label="Source documents">
           <a href="/README.md">README</a>
           <a href="/QUICKSTART.md">Quickstart</a>
+          <a href="/CHANGELOG.md">Changelog</a>
         </nav>
       </header>
 

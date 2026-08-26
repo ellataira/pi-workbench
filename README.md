@@ -1,34 +1,30 @@
 # Pi Workbench
 
-This private repository is the canonical, portable source for Ella's Pi
-cockpit. It provides:
+Pi Workbench is Ella's private, portable Pi cockpit for cmux. It keeps the
+custom extensions, tests, documentation, and sanitized configuration needed to
+restore the setup without storing prompts, transcripts, credentials, or runtime
+session data.
 
-New to the setup? Start with the complete [Pi + cmux quickstart](./QUICKSTART.md).
+- New setup or full command reference: [Pi + cmux quickstart](./QUICKSTART.md)
+- Dated feature history: [Changelog](./CHANGELOG.md)
 
-- explicit compressed session checkpoints in Obsidian;
-- bounded recall and explicit global/project memory promotion;
-- persistent Pi-native cmux child sessions in isolated Git worktrees;
-- a visible pair-programming terminal where the user runs each command and Pi
-  automatically analyzes bounded output;
-- an orchestration policy for lightweight fan-out versus implementing workers;
-- a loopback Markdown and diff review surface that can append to the Pi draft;
-- a draggable, always-on-top macOS pet driven by real Pi and subagent events.
+## What it adds
 
-Third-party Pi packages provide MCP, background subagents, context compression,
-markdown preview, structured questions, Datadog access, and the powerline.
-Trajectory captures local session telemetry.
+- bounded, compressed session memory with Obsidian, Drive retention, and
+  proactive recall;
+- persistent implementation agents in isolated worktrees plus lightweight
+  background fan-out;
+- a visible pair-programming terminal where Pi observes commands that you run;
+- one session-aware Markdown and diff review workspace with inline comments;
+- session utilities for workspace switching, forks, resume cloning, rewind,
+  command copying, rename, and deletion;
+- MCP recovery, project profiles, health audits, action inboxes, and Paddington,
+  the always-on-top macOS lifecycle pet.
 
-`pi-subagents@0.52.1` is pinned as a workbench dependency rather than installed
-as a second standalone Pi package. Installation fails closed if its artifact
-defaults drift: raw child input, transcripts, and metadata are disabled while
-bounded output remains available. Built-in child roles also disable ambient
-extension discovery so their child-only runtime cannot collide with the parent
-subagent extension.
+Third-party integrations remain vendor-neutral. `pi-subagents` is pinned and
+hardened so child prompts, transcripts, and raw metadata are not retained.
 
 ## Install or restore
-
-Clone the private repository, install its pinned JavaScript dependencies, run
-the tests, and merge its portable configuration into Pi:
 
 ```bash
 git clone git@github.com:ellataira/pi-workbench.git
@@ -43,460 +39,92 @@ npm run install:daily-review
 npm run install:monthly-audit
 ```
 
-`bootstrap` links the checkout at
-`~/.agents/extensions/agent-journal`. If a directory or different link already
-exists there, `--replace-existing` first renames it to a timestamped backup. It
-merges the repository's settings, profiles, and subagent limits with existing
-Pi configuration; it does not erase extra local packages, provider/model
-selection, or unrelated fields.
+`bootstrap` links this checkout at `~/.agents/extensions/agent-journal` and
+merges portable settings without replacing machine-specific packages, model
+selection, credentials, or unrelated configuration. Rebuild the native pet on
+a Mac with Apple build tools using `npm run build:pet`.
 
-The macOS pet is built from the tracked Swift sources. Rebuild it only on a Mac
-with the required Apple build tools:
+## Everyday commands
 
-```bash
-npm run build:pet
-```
-
-The Git boundary is intentional. Source, tests, documentation, sanitized Pi
-configuration, and credential-free MCP connection definitions are tracked.
-OAuth credentials, MCP authentication state, raw Pi sessions,
-Obsidian journal content, SQLite/runtime state, caches, dependencies, and built
-applications are not tracked. Journal retention and Drive rehydration continue
-to operate independently of this repository. GitHub Actions runs the extension
-suite and rendered-guide test for every push and pull request.
-
-## Start and navigate
-
-Open cmux, create or select a terminal workspace, then run:
+Start Pi inside a cmux terminal:
 
 ```bash
 pi
 ```
 
-cmux terminals set `CMUX_WORKSPACE_ID`, which is required for the persistent
-child bridge. Use cmux's workspace sidebar or tabs to move between the parent
-and child terminals.
+- `/workspace <path>` changes repositories without losing the conversation;
+  `/workspace back` returns to the previous repository.
+- `/agents` opens the Agent Center. Use `/agents persistent <task>` for an
+  isolated implementation agent and background subagents for lightweight
+  research or review fan-out.
+- `/fork` branches from an earlier message into a new cmux tab. `Alt+Enter` in
+  `/resume` clones a saved session without replacing the current one.
+- `/pair start` opens the user-controlled paired terminal; `/pair stop` ends
+  observation.
+- `/review` is the single review entry point. It opens the cumulative
+  session workspace, where you can switch among last-turn, last-commit,
+  branch-from-main, staged, unstaged, and complete-file views.
+- `/copy` selects one command, a complete multiline shell script, or the full
+  latest response.
+- `/rewind`, `/rename`, and `/end` resume from a prior message, rename the
+  session, or permanently delete only the active native session file.
+- `/memory`, `/checkpoint`, and `/distill` expose memory status, explicit
+  checkpointing, and daily promotion review.
+- `/profile` selects a vendor-neutral working profile such as writing mode.
 
-Inside Pi:
-
-- `/workspace <path>` switches the active repository while preserving the
-  conversation. Pi rebuilds cwd-bound tools and replaces repository-local
-  `AGENTS.md`, `CLAUDE.md`, skills, settings, trust, and project profile with
-  those from the target repository. Shared skills, MCP connections, model
-  state, and global memory remain available.
-- `/workspace` opens a recent-repository chooser. `/workspace show` reports the
-  active and previous repository; `/workspace back` returns to the prior repository. Workspace switching
-  requires a persisted Pi session and a target inside a Git repository.
-- `/agents` opens the **Agent Center** in the current tab. It can run a parallel
-  task, create an implementation agent, or manage an existing agent without
-  changing cmux tabs.
-- `/agents persistent <task>` creates an isolated Git worktree and starts a persistent
-  Pi-native child in a new, unfocused cmux workspace. Enter it whenever you
-  want to chat with or steer the child. The supervisor waits for the new shell
-  and a Pi `session_start` handshake before registering it, so long tasks are
-  not pasted into an unready terminal and failed launches are rolled back.
-- `/agents list` reports only owned workspaces and whether each child is active, orphaned, dirty, or
-  merged. `/agents recover`, `/agents patch`, and `/agents cleanup`
-  recover the session, produce a bounded reviewable patch, or remove only a
-  clean merged child.
-- Persistent implementations remain visible in the parent through a live
-  **Agent Center** widget. It names the child, branch, current lifecycle phase
-  or tool, last heartbeat, and a redacted three-line tail from the child's cmux
-  screen. The newest child is followed automatically. Selecting an agent in
-  `/agents` offers **Follow here**, **Send instruction**, **Review changes**, and
-  **Open child tab**. Only the explicitly named **Open child tab** action switches
-  your current tab. The live tail is UI-only and is
-  never written to the parent session, journal, progress files, or transcripts.
-- A child tab identifies itself and keeps `Run /agents to return to the
-  supervisor` on screen. Legacy
-  children without a recorded parent discover non-child workspaces, ask once
-  when the choice is ambiguous, and remember the selected supervisor.
-- Bare `/agents` is context-sensitive: supervisors see the Agent Center, while
-  children see a short menu with **Return to Agent Center** first. Lifecycle
-  rows use the child worktree path and never show
-  an `undefined` location.
-- Supervisor helper modules are loaded from fresh source during `/reload`, so a
-  running Pi cannot retain an older helper export set after an extension update.
-- Ask the parent to focus, message, or interrupt a named child; it uses the
-  `cmux_session` tool, which rejects unknown workspaces.
-- `/fork` selects an earlier user message, creates an independent session at
-  that point, and opens it in a new focused cmux tab with the selected prompt
-  ready to edit. The parent session never switches or continues the forked
-  work. Asking Pi to "start this task in a /fork" uses the same detached path,
-  starts the task in the new tab, and does not substitute a background
-  subagent. Detached forks share the current checkout; use `/agents persistent`
-  when implementation needs an isolated worktree.
-- `/resume` also supports cloning a saved session without replacing the current
-  one: highlight the session and press `Alt+Enter`. Pi opens the clone in a new
-  focused cmux tab; truncated session paths never need to be copied manually.
-- `/rename <name>` renames the active session using Pi's native session-name
-  metadata. `/rename` without an argument reports the current name.
-- `/end` confirms the exact active session, permanently deletes only its native
-  session history file, and exits Pi. It does not remove project files,
-  worktrees, journal memories, or other sessions.
-- `/rewind` lists recent user messages and resumes from the selected point while
-  preserving the abandoned conversation branch. It does not roll back files.
-- `/copy` opens a picker for individual commands, complete multiline shell
-  scripts, or the entire latest response. `/copy-command` is the vendor-neutral
-  fallback when the runtime reserves `/copy`.
-- `/pair start` creates a terminal split to the right and labels it **Pi Pair
-  Terminal**. It keeps your normal terminal colors stable instead of changing
-  the background while commands run. An isolated owner-only zsh profile loads
-  your normal shell configuration without changing `~/.zshrc`. Pi proposes one command, you run it
-  visibly, and Pi automatically analyzes the resulting screen delta before
-  proposing one next command. With an empty paired prompt, press Tab to insert
-  that command for inspection or editing; press Enter yourself to execute it.
-  If the prompt already contains text or no Pi suggestion is pending, Tab keeps
-  normal shell completion. Pi never types into or executes through the paired
-  terminal. Pair ownership belongs to the originating cmux terminal,
-  so `/clone`, `/resume`, `/new`, and `/reload` keep watching the same split.
-  A detached `/fork` opens elsewhere and does not steal the parent's watcher.
-  `/reload` also reloads the pair helper implementation instead of using
-  stale module exports. `/pair reconnect` adopts an existing split after a legacy disconnect.
-  `/pair stop` closes the dedicated split; manually closing the split clears
-  pair mode after the bounded disconnect check.
-- Use `/tree` inside a child and `/resume` or its session ID to return later.
-- `/subagents-fleet` shows background subagent work.
-- Use background scouts/reviewers for lightweight fan-out. Use workers or
-  `/agents persistent` for implementing work; every implementing child gets one worktree
-  and one writer.
+The quickstart documents all commands, navigation behavior, recovery paths,
+and safety constraints.
 
 ## Action inbox and project profiles
 
-- `/inbox` opens a readable selector for persistent approval, blocked, completed, and failed states
-  from Pi sessions, daily distillation, subagents, MCP, and automations.
-  `/inbox acknowledge <id|all>` clears items explicitly; `/inbox clear
-  completed` and `/inbox clear stale` remove non-actionable history.
-- Paddington reads the same inbox and prioritizes failed and blocked work.
-  Clicking acknowledges the item and focuses its cmux workspace when routing
-  metadata is available.
-- Inbox records contain only fixed state, source, reason code, timestamps, and
-  routing IDs. Prompts, task names, messages, tool arguments, and transcripts
-  are not accepted.
-- `/profile` opens a vendor-neutral project-profile chooser. `/profile <name>` applies
-  one; `/profile clear` restores the session's prior model, thinking, and tool
-  state; `/profile reload` reloads configuration.
-- `/profile writing` selects the documentation and writing mode: medium
-  thinking, one writer, and verification for source accuracy, links and
-  commands, and consistency across related docs.
-- Global profiles live at `~/.pi/agent/project-profiles.json`. A repository can
-  override them and optionally select a default with
-  `<repo>/.pi/project-profiles.json`. Model selection is optional; when used it
-  requires an explicit provider and model pair.
+`/inbox` consolidates actionable states from sessions, subagents, MCP,
+automations, and daily memory review. Paddington surfaces the same bounded
+metadata and can focus a related cmux workspace. Inbox records never contain
+prompts, messages, tool arguments, or transcripts.
 
-## Journal and memory
+Project profiles tune model-independent behavior such as tool availability,
+verification, and writing depth. Repository-local profiles override global
+ones without locking the workbench to a model vendor.
 
-- Pi runs bounded proactive recall only for explicit continuity and
-  context-finding turns, such as asking what was decided previously. Ordinary
-  implementation, writing, and review prompts do not query memory. Recall is
-  project-scoped when Pi is inside a Git checkout, capped at three items and
-  roughly 400 tokens, and injected quietly with provenance. One to four
-  normalized topic tags are stored in human-readable YAML frontmatter and in
-  SQLite topic tables; topic-only matches participate in FTS recall and exact
-  topic matches are ranked first.
-- `journal_checkpoint` accepts only an explicit `compressed-summary-v1`
-  representation. Pi saves the first durable change once per session. Later
-  durable work stays pending without a timer and is saved before context
-  compression or through an explicit checkpoint. Short read-only MCP lookups,
-  adapter status/connection/authentication actions, review-only turns, and
-  clarification requests never flush pending work; remote MCP writes remain
-  substantive. `/checkpoint` saves immediately; the model does
-  not independently classify completed work as a checkpoint milestone. An
-  automatic checkpoint rejected for copied conversation text is retried once
-  with stricter paraphrasing before `/checkpoint` becomes the manual retry path.
-  A successful automatic checkpoint ends with a visible `Memory checkpoint
-  saved.` confirmation rather than an empty assistant message. A queued
-  automatic checkpoint cannot consume an intervening user prompt.
-- The checkpoint may contain goals, outcomes, decisions, next steps, artifact
-  references, tags, and aggregate usage only. At Pi's checkpoint boundary,
-  non-reference artifact entries are discarded and counted while valid paths,
-  URLs, and stable IDs continue to storage. The storage validator remains
-  strict and rejects artifact prose from any caller that bypasses that boundary.
-  Child-task labels are stored generically rather than copying delegated text.
-- Raw prompts, assistant responses, tool arguments, transcripts, role-labelled
-  dialogue, and summary fields copied directly from conversation text are
-  rejected and are never added to Obsidian or SQLite. Copy detection compares
-  the checkpoint only with visible user and assistant prose; private reasoning
-  and the checkpoint tool's own arguments are excluded from that comparison so
-  a semantic checkpoint cannot reject itself. Neither excluded source is stored.
-- The checkpoint backstop asks the active model for an explicit compressed
-  representation; it never derives or persists a summary from a shutdown,
-  compaction summary, transcript, or session-file scan. Before compaction, Pi
-  pauses once when durable work is pending, asks the active model for that
-  semantic checkpoint, and resumes compaction afterward. Hard context overflow
-  fails open after that single attempt so recovery cannot loop or strand the
-  session. The former reconciler remains paused.
-- Pi reserves 49,152 context tokens before automatic compaction and retains
-  roughly 20,000 recent tokens afterward. The larger reserve prevents a long
-  tool-driven turn from consuming the final context space before Pi's
-  post-agent compaction check can run. The journal's single pre-compaction
-  checkpoint attempt uses this reserved runway rather than delaying an already
-  overflowing session.
-- `/diary` is a compatibility route; the old diary is frozen.
-- A launchd reminder runs at 09:00 America/New_York, adds the fixed
-  `daily-distillation` action to Paddington's inbox, and displays a macOS
-  notification. The next interactive Pi turn scans from the next unreviewed
-  day through yesterday. Consecutive dates with no candidates are completed in
-  one bounded local pass; Pi stops and asks only at the first date that has
-  promotion candidates. Pi asks which candidates
-  to promote, edit, skip, or snooze. Nothing is promoted without the user's
-  explicit choice. Use `/distill [YYYY-MM-DD]` to start manually.
-- `/memory` is the single guided entry point for status, checkpointing, daily
-  review, retention cleanup, integrity verification, and receipt audits.
-- A weekly retention audit reports native Pi sessions older than 30 days.
-  Use `/memory audit` for a read-only report or `/memory cleanup` to
-  process stable batches of at most five. Each create/reuse first requires an
-  exclusive 15-minute local upload claim, then reads the specific Drive object
-  back, verifies its SHA-256 content, persists a receipt, and deletes only the
-  corresponding native JSONL. Missing or mismatched summaries and active
-  claims fail closed and remain local.
-- Verified compressed session Markdown remains local for 90 days, then moves
-  to Drive-only cold storage. Search metadata, topics, Drive file and folder
-  IDs, exact archive filenames, hashes, and receipts remain local indefinitely
-  and can rebuild SQLite after index loss. Retrieval uses the file ID directly;
-  the folder and filename are recovery locators.
-- A weekly integrity monitor checks at most five least-recently-verified Drive
-  archives. Missing objects and content mismatches are recorded but never
-  accepted as memory. `/memory receipts` separately reports corrupt,
-  schema-invalid, and duplicate receipts without repairing or deleting them.
-- Invoke the shared `agent-memory` skill for bounded recall or `/learn`-style
-  promotion.
-- Run `node ~/.agents/extensions/agent-journal/bin/memory-canary.mjs` for an
-  isolated checkpoint plus retention/eviction/rehydration proof. Run
-  `node ~/.agents/extensions/agent-journal/bin/migrate-memory.mjs --apply`
-  after importing legacy journal Markdown; it sanitizes in place, creates no
-  raw-content backup, replaces task-shaped legacy summaries with neutral
-  metadata, merges duplicate identities, and rebuilds SQLite.
-- Install the monthly audit with `npm run install:monthly-audit`. At 10:00 on
-  the first day of each month it catches up link-only daily rollups, writes the
-  aggregate Pi health report, runs the memory canary and full test suite, and
-  adds one fixed `/inbox` failure item when any check regresses. Reports include
-  bounded error rates plus explicit review/pair-open counts; they contain no
-  prompts, responses, queries, recalled content, or tool arguments and live
-  under `agent-journal/audits/YYYY/MM/`. Run
-  `npm run audit:pi -- --days 30 --write` for a manual report.
-- Invoke the shared `code-review` skill for a focused read-only review of the
-  requested diff or current working tree.
-- Invoke the shared `review-changes` skill for a heavyweight read-only review
-  of any working tree, commit, branch, range, pull request, or file set. It
-  adapts to repository-native instructions and tracks complete file coverage.
-- Session archive:
-  `~/Documents/Obsidian Vault/ella.taira/agent-journal/sessions`
-- Promoted memory:
-  `~/Documents/Obsidian Vault/ella.taira/agent-journal/memory`
-- Daily link rollups:
-  `~/Documents/Obsidian Vault/ella.taira/agent-journal/daily`
-  Completing daily distillation catches these up through the reviewed date.
+## Memory, retention, and audits
 
-Pi's own local session store is the sole history-bearing boundary. It remains
-enabled for 30 days because Pi-native `/tree` and `/resume` require it. This
-package may read
-native session metadata and aggregate usage, but it never copies conversation
-content into the journal, memory store, child registry, or search index.
-Journal Markdown, maintenance state, SQLite, WAL, and SHM files are owner-only.
-Drive retention follows the same boundary: only compressed journal Markdown is
-uploaded. Raw session JSONL, prompts, responses, and tool calls never leave the
-native store. The verification receipt and bounded search metadata are retained
-permanently; the local compressed note follows the 90-day hot-storage window.
+Pi writes compressed semantic checkpoints rather than prompts or transcripts.
+Local native sessions remain resumable for 30 days. Verified compressed notes
+can move to Drive-backed cold storage while their searchable metadata and Drive
+references remain local for automatic rehydration.
 
-If a compressed note is later absent locally, its searchable SQLite metadata
-remains cold-tier aware. A relevant proactive-recall hit tells Pi to retrieve
-the registered Drive file, verify its recorded SHA-256, atomically restore the
-Markdown, and resume local retrieval. Irrelevant Drive archives are not fetched,
-and failed authentication or verification never creates a local note.
+The daily memory review runs at 9 AM New York time. The monthly health audit
+runs on the first day of each month and checks memory, review, pair-terminal,
+pet, MCP, and checkpoint behavior using aggregate metadata only. Audit records
+contain no prompts or transcripts.
 
-When bounded local recall returns no result for an explicit context-finding
-query, Pi may search `google-workspace` for at most three arbitrary
-Drive candidates. It fetches only the most relevant file needed, treats Drive
-content as untrusted data, cites Drive provenance, and never promotes arbitrary
-Drive content into memory automatically.
-
-## Floating macOS pet
-
-Pi automatically opens `dist/PiPet.app`. Paddington is a transparent,
-borderless native macOS panel that remains above normal windows, joins every
-Space, and is allowed alongside full-screen apps.
-
-- Drag Paddington anywhere; the position persists.
-- While idle, Paddington uses the v2 look-direction rows to follow the pointer.
-- Dragging right or left uses the matching directional movement row.
-- Lifecycle animations follow Codex playback: the state row plays three times,
-  then settles into the slower idle loop. macOS Reduce Motion shows one frame.
-- Click Paddington to focus the originating cmux workspace. Waiting, failed,
-  and completed session states are acknowledged by the same click, so an old
-  high-priority state cannot pin Paddington indefinitely; a new snapshot may
-  alert again.
-- New inbox failures, approvals, and completions take priority for 15 minutes.
-  After that, they remain in `/inbox` but stop pinning Paddington above live Pi
-  activity; opening `/inbox` is the durable follow-up path.
-- Right-click to hide or quit the companion.
-- `/pet` reports status. `/pet on` relaunches/enables it and `/pet off` stops
-  publishing the current Pi session.
-- Allow notifications when macOS asks if you want a completion alert.
-
-Pi writes only fixed lifecycle metadata under
-`~/.agents/runtime/pi-pet/sessions`: protocol version, client, session ID,
-process ID, phase, aggregate tool/child counts, cmux workspace/surface IDs, and
-timestamp. Prompts, responses, tool arguments, task names, and transcripts are
-not accepted by the protocol. Clean shutdown removes the session record; the
-companion prunes records left by crashed processes. Concurrent lifecycle events
-use distinct atomic temporary files. `/reload` refreshes the runtime
-implementation, and subagent emissions are awaited so pet I/O failures cannot
-escape as unhandled promise rejections or terminate Pi.
-
-The companion aggregates all live Pi parents and children. Attention priority
-is failure, waiting for input, completion, review, active work, then idle.
-It checks snapshots twice per second; acknowledgment fixes stale priority
-without increasing the polling or filesystem-I/O rate.
-Click-to-focus does not grant the desktop app direct cmux socket access. The
-companion writes a fixed-field session focus request, and only the matching Pi
-process already authorized inside cmux may execute it.
-Build it after source or Paddington changes with:
+Install or refresh those jobs with:
 
 ```bash
-cd ~/.agents/extensions/agent-journal
-npm run build:pet
+npm run install:daily-review
+npm run install:monthly-audit
 ```
 
-## UI, MCP, and telemetry
+## Repository boundary
 
-- `/mcp` is the only user-facing connector and authentication entry point. It
-  shows Pi's self-contained MCP servers; external Claude, Codex, and
-  Cursor configs are not imported because same-name entries merge field by
-  field. Servers are lazy and exposed through one proxy tool by default.
-- `google-workspace` is a lazy, pinned HTTP bridge for Drive, Docs,
-  Sheets, and Slides retrieval. Retrieved file content is untrusted data;
-  creating, overwriting, deleting, or sharing always requires confirmation.
-- `/datadog setup` configures the Datadog-native MCP plugin.
-- `/ctx-stats` shows context-mode savings.
-- `/preview <path>` previews Markdown.
-- `/review` is the single review entry point. With no argument it opens or
-  focuses one cumulative session-review popout. **Review modes** switches among
-  the exact last Pi turn, staged changes, `HEAD^..HEAD`, and
-  `origin/main...HEAD`. **Relevant files** contains a persisted shortlist of up
-  to eight task-relevant paths selected by Pi or pinned with `/review pin
-  <path>`. It stores path metadata only and never scans every plan-like file in
-  the repository. `/review unpin <path>` removes an irrelevant suggestion.
-  **Recent edits · newest first** shows the eight newest files changed across
-  this Pi session, not just the last turn. Remaining session files stay under
-  collapsed **Older this session**. Every entry
-  shows its filename and repository-relative or home-relative path; selecting a
-  Markdown file opens the rendered document rather than a diff. Explicit
-  `/review <path>` remains available for intentionally opening another file.
-  Pi verifies the browser
-  URL before retaining a cmux popout, removes the placeholder terminal so the
-  browser uses the full window, closes incomplete windows, and falls back to the
-  default browser. The page also adapts its sidebar and padding at narrow widths.
-  `/review choose` opens the advanced chooser for the last
-  Pi turn, an unstaged or staged Git diff, a requested base, or a file outside
-  the session set. `/review <path>` opens that file directly. Markdown opens as
-  a rendered GFM preview; select rendered text
-  and choose the nearby **Comment** action to
-  open a textbox beside that exact passage. Completing it creates an inline
-  `[an: ...]` annotation that can be edited or removed in place. **Edit source**
-  exposes the raw Markdown editor, while the collapsible tray remains the batch
-  overview. Unfinished comments cannot be saved or submitted. Text files are
-  read-only. Rendered annotations use compact 12px pink styling, a flat
-  three-pixel corner, and a pink left rule instead of an oval border. Comment
-  text stays explicitly left-aligned, including when it wraps. Each new
-  selection remains armed through transient browser selection collapse and
-  snapshots its action before focus changes, so adding later comments remains
-  reliable after the preview already contains annotations. **Update & add
-  another** saves the active comment and arms the next rendered selection,
-  opening its editor automatically without depending on a second annotation click.
-  Existing annotations are non-selectable and removed from both the
-  selected text and its mapping context, so a later selection may cross an
-  earlier comment without producing a source-mapping error. Multi-line
-  selections also use a bounded word-sequence fallback when rendered block or
-  table spacing differs from the Markdown source. Inline-code spans are
-  projected literally, so wrapped identifiers containing underscores map back
-  without treating their characters as emphasis markers.
-  `npm run test:e2e-review` validates both the ordinary second-annotation workflow
-  and **Update & add another**, plus selections spanning rendered lines and
-  wrapped inline-code identifiers, using native mouse selections in isolated
-  headless Chrome.
-- `review_open` gives the agent the same surface programmatically. When you ask
-  to review files or a diff, Pi opens it directly instead of returning paths
-  and asking you to type `/review`. Bare `/review` opens one dedicated cmux
-  popout for the session and later calls reuse that window. Its left sidebar
-  keeps the review modes visible, shows the bounded task shortlist under
-  **Relevant files**, shows the eight newest cross-turn session files under **Recent
-  edits**, and collapses the rest under **Older this session**. The combined
-  **Last Pi turn** diff opens first,
-  so the intended starting point is explicit. The workspace still retains up to
-  100 session files, but file contents load only when selected. If `/workspace`
-  visits more than one repository, the sidebar
-  keeps the session files together with unambiguous paths. Git review may name a different repository
-  directory, so an exact range can open without changing the active Pi workspace.
-- The advanced `/review choose` menu retains **Changes from last Pi turn**, which opens one combined diff containing
-  only changes made during
-  the immediately preceding Pi turn. It compares the actual pre-turn worktree
-  with the settled worktree, so earlier dirty changes are excluded unless the
-  turn modifies them. Git-visible shell, formatter, commit, and subagent
-  changes are included; bounded untracked files and directly touched non-Git
-  files are supported. Internal `.pi-subagents` artifacts, nested Claude
-  worktrees, runtime state, build output, and dependencies are filtered before
-  snapshot limits and never create skipped-file warnings.
-- After a changed turn, Pi shows **Session review ready — run /review**, the
-  current reviewable-file count, and a separate skipped count for unavailable,
-  oversized, or unsupported session entries. Invalid entries are excluded
-  before the workspace is opened, so one bad path cannot reject the valid files
-  or Git modes. If the popout is already open, its file sidebar
-  updates in place and re-sorts files by modification time; clean file and diff views follow disk updates without
-  stealing focus. A no-change turn clears only the previous-turn diff instead
-  of silently retaining stale work.
-- The workspace mode switcher opens generated last-turn, staged, latest-commit,
-  and branch-from-main diffs. The advanced Git choices also support unstaged or base-comparison diffs
-  with persistent line comments. Direct forms use `/review git`,
-  `/review git staged`, `/review git <base>`, or an exact range such as
-  `/review git <commit>^..<commit>`.
-  Double-clicking a supported file in cmux routes through the same surface when
-  a live Pi session is available.
-- “Add comments to Pi” appends the complete staged Markdown review as one
-  bounded draft addition without submitting it. Every comment includes its
-  current Markdown source line so Pi can locate it without relying on the
-  context string alone. The window then waits for the disk version to change
-  and reloads the updated file while remaining open for verification. Submitted
-  transient annotations are cleared and the
-  approximate scroll position is preserved. Clean read-only views also follow
-  disk updates. Unsubmitted comments or source edits are never discarded
-  automatically; **Reload from disk** appears instead. Annotations change the
-  file only when **Save** is chosen. `/reload` loads fresh review code; a page
-  opened before that command must be replaced once with `/review` or
-  `/review <path>`.
-  Ordinary selections remain transient. Diff
-  persistence stores only the explicit comment, file/line/side anchor, and a
-  context hash; it never stores selected diff text, prompts, or transcripts.
-- Markdown saves are atomic. A stale browser view never overwrites a newer
-  on-disk file; the UI displays the error and offers an explicit, destructive
-  **Reload from disk** action. `Cmd-S`/`Ctrl-S` saves, `Cmd-Enter`/`Ctrl-Enter`
-  updates the active inline comment, and `Escape` closes it. Selection actions
-  and comment editors are viewport-bounded and keep the annotated passage at
-  its existing scroll position while the preview refreshes.
-- `/powerline` configures the footer. Its default preset shows model, context,
-  tokens, and cost; fixed-editor and mouse capture are disabled for cmux.
-- `/pet [on|off|status]` controls the floating lifecycle pet.
-- `trajectory status` shows current/recent session metrics.
+Tracked content includes source, tests, docs, sanitized Pi settings, and
+credential-free MCP definitions. The repository excludes OAuth state, tokens,
+raw sessions, Obsidian content, SQLite/runtime state, caches, dependencies, and
+built applications.
 
-## Provider boundary
-
-No orchestration or memory policy names a required model provider. Child
-commands inherit normal Pi configuration, and the AI Gateway model catalog is
-an adapter layer. Open-weight providers can be added later without changing the
-journal, memory, cmux, or subagent contracts.
+The daily GitHub sync validates `npm test` and `git diff --check`, rejects
+secret-like files, commits verified local changes, and safely integrates remote
+updates. It updates this README only when the current entry-point behavior or a
+major capability changes; every meaningful sync adds a dated changelog entry.
 
 ## Validation
 
-Run:
-
 ```bash
-cd ~/.agents/extensions/agent-journal
 npm test
-npm run build:pet
-pi list
-trajectory doctor
+npm run canary:memory
+npm run audit:pi
+npm run test:e2e-review
 ```
 
-The `Agent journal reconciler` automation is paused. It must not be enabled
-until it has a genuine compressed-summary producer; raw session backfill is not
-supported.
+GitHub Actions runs the extension suite and rendered-guide checks on pushes and
+pull requests.

@@ -58,6 +58,7 @@ test("ships searchable controls and preserved source references", async () => {
   assert.match(page, /aria-label="Search guide"/);
   assert.match(page, /\/README\.md/);
   assert.match(page, /\/QUICKSTART\.md/);
+  assert.match(page, /\/CHANGELOG\.md/);
   assert.match(readme, /Action inbox and project profiles/);
   assert.match(quickstart, /Pi \+ cmux quickstart/);
   assert.match(quickstart, /New command quick reference/);
