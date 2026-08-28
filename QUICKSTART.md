@@ -427,6 +427,12 @@ Agent Center · supervisor · 1 active agent
    manage: /agents (stays in this tab)
 ```
 
+If you open the child and answer a question there, the parent marks that child
+as `answered in child` on the next progress refresh. This is fixed metadata
+only: it stores the answer timestamp so the parent does not duplicate the same
+question, but it does not store your answer text, the child question, or a
+transcript.
+
 Inside the child, it changes to:
 
 ```text

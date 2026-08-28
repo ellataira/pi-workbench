@@ -153,13 +153,21 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		await rename(temporary, targetPath);
 	}
 
-	async function emitChildProgress(phase: string, toolName = "") {
+	async function emitChildProgress(
+		phase: string,
+		toolName = "",
+		extra: Record<string, unknown> = {},
+	) {
 		if (!childProgressPath || !childProgressSessionId) return;
 		childProgress = {
 			version: 1,
 			sessionId: childProgressSessionId,
 			phase,
 			...(toolName ? { toolName } : {}),
+			...(childProgress?.lastUserInputAt
+				? { lastUserInputAt: childProgress.lastUserInputAt }
+				: {}),
+			...extra,
 			updatedAt: new Date().toISOString(),
 		};
 		await writeProgress(childProgressPath, childProgress);
@@ -1090,9 +1098,16 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: `${event.systemPrompt}\n\n${orchestrationPolicy}\n`,
-	}));
+	pi.on("before_agent_start", async (event) => {
+		if (childProgressPath && childProgress?.phase === "waiting") {
+			await emitChildProgress("thinking", "", {
+				lastUserInputAt: new Date().toISOString(),
+			});
+		}
+		return {
+			systemPrompt: `${event.systemPrompt}\n\n${orchestrationPolicy}\n`,
+		};
+	});
 
 	pi.on("session_before_fork", async (event, ctx) => {
 		// Native /clone emits the same hook with position=at. Keep clone's native

@@ -3,6 +3,11 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-08-28
+
+- Marked child-side user answers in the parent progress widget so supervisors
+  do not duplicate a question already answered in the child tab.
+
 ## 2026-08-26
 
 - Made the GitHub repository private and removed organization-specific service

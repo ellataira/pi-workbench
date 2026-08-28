@@ -309,6 +309,7 @@ test("child progress stores lifecycle metadata without prompts or terminal outpu
       phase: "tool",
       toolName: "apply_patch",
       updatedAt: "2026-08-21T12:00:00.000Z",
+      lastUserInputAt: "2026-08-21T11:59:00.000Z",
       prompt: "secret task",
       output: "terminal transcript"
     }),
@@ -317,9 +318,33 @@ test("child progress stores lifecycle metadata without prompts or terminal outpu
       sessionId: "child-123",
       phase: "tool",
       toolName: "apply_patch",
+      lastUserInputAt: "2026-08-21T11:59:00.000Z",
       updatedAt: "2026-08-21T12:00:00.000Z"
     }
   );
+});
+
+test("parent progress makes child-side answers visible without duplicating the question", () => {
+  const lines = formatChildProgressLines(
+    [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core" }],
+    new Map([["child-123", {
+      version: 1,
+      sessionId: "child-123",
+      phase: "thinking",
+      lastUserInputAt: "2026-08-21T12:00:00.000Z",
+      updatedAt: "2026-08-21T12:00:02.000Z",
+      prompt: "the raw answer must not appear"
+    }]]),
+    { now: Date.parse("2026-08-21T12:00:05.000Z") }
+  );
+
+  assert.deepEqual(lines, [
+    "Agent Center · supervisor · 1 active agent",
+    "└─ campaign-core · thinking · answered in child · active now",
+    "   pi/campaign-core",
+    "   manage: /agents (stays in this tab)"
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /raw answer/);
 });
 
 test("parent progress keeps navigation behind the agent center", () => {

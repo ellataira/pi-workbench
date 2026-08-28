@@ -80,6 +80,7 @@ export function normalizeChildProgress(value) {
   if (!CHILD_PROGRESS_PHASES.has(value.phase)) return null;
   const timestamp = Date.parse(value.updatedAt);
   if (!Number.isFinite(timestamp)) return null;
+  const lastUserInputTimestamp = Date.parse(value.lastUserInputAt);
   const toolName = typeof value.toolName === "string"
     ? value.toolName.replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 80)
     : "";
@@ -88,19 +89,26 @@ export function normalizeChildProgress(value) {
     sessionId: value.sessionId.slice(0, 160),
     phase: value.phase,
     ...(toolName ? { toolName } : {}),
+    ...(Number.isFinite(lastUserInputTimestamp)
+      ? { lastUserInputAt: new Date(lastUserInputTimestamp).toISOString() }
+      : {}),
     updatedAt: new Date(timestamp).toISOString()
   };
 }
 
-function childActivityLabel(updatedAt, now) {
+function childActivityLabel(progress, now) {
+  const updatedAt = progress?.updatedAt;
   const ageMs = Math.max(0, now - Date.parse(updatedAt));
-  if (ageMs < 10_000) return "active now";
+  const answeredAt = Date.parse(progress?.lastUserInputAt);
+  const answeredMs = Number.isFinite(answeredAt) ? now - answeredAt : Infinity;
+  const prefix = answeredMs >= 0 && answeredMs < 15 * 60_000 ? "answered in child · " : "";
+  if (ageMs < 10_000) return `${prefix}active now`;
   const age = ageMs < 60_000
     ? `${Math.floor(ageMs / 1000)}s ago`
     : ageMs < 3_600_000
       ? `${Math.floor(ageMs / 60_000)}m ago`
       : `${Math.floor(ageMs / 3_600_000)}h ago`;
-  return ageMs >= 15_000 ? `heartbeat stale · ${age}` : age;
+  return `${prefix}${ageMs >= 15_000 ? `heartbeat stale · ${age}` : age}`;
 }
 
 function childPhaseLabel(progress) {
@@ -150,7 +158,7 @@ export function formatChildProgressLines(
   ];
   for (const [index, { child, progress }] of visible.entries()) {
     const activity = progress?.updatedAt
-      ? childActivityLabel(progress.updatedAt, now)
+      ? childActivityLabel(progress, now)
       : "startup pending";
     const tree = index === visible.length - 1 ? "└─" : "├─";
     lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)} · ${activity}`);
