@@ -43,8 +43,8 @@ changed.
 |---|---|---|
 | `/review` | Open or focus the cumulative session review popout | `/review choose`, `/review <path>`, `/review pin <path>`, `/review unpin <path>`, `/review git`, `/review git staged`, `/review git <base>` |
 | `/rewind` | Choose an earlier user message, restore it to the editor, and preserve the abandoned branch | `/tree` for the complete native tree |
-| `/copy` | Choose a fenced or inline CLI command from the latest response, or the entire response | `/copy-command` is the vendor-neutral fallback |
-| `/agents` | Open the Agent Center without changing tabs | Choose **Run parallel task**, **Start implementation agent**, or an existing agent |
+| `/copy` | Copy the suggested CLI command immediately, then optionally choose another command or the whole response | `/copy-command` is the vendor-neutral fallback |
+| `/agents` | Open the Agent Center without changing tabs | Choose **Run parallel task**, **Start implementation agent**, an existing persistent child, or an active background run |
 | `/memory` | Inspect status or choose checkpoint, daily review, cleanup, or integrity work | `/checkpoint`, `/distill`, `/memory audit`, `/memory cleanup`, `/memory integrity` |
 | `/inbox` | Select an action item, focus its cmux workspace, or acknowledge it | `/inbox list`, `/inbox clear completed`, `/inbox clear stale` |
 | `/workspace` | Choose a recent repository or enter another path | `/workspace <path>`, `/workspace back`, `/workspace show` |
@@ -130,6 +130,9 @@ The key boundary is simple:
 - `/agents` guides both execution shapes. Background subagents are for
   lightweight fan-out; implementing children use one isolated Git worktree and
   one writer.
+- Active background subagents also appear in `/agents`, `/agents list`, and the
+  Agent Center widget. Use `/subagents-fleet` for detailed background-run
+  steering and recovery.
 
 ### 3. Finish cleanly
 
@@ -384,13 +387,21 @@ The supervisor:
 `/reload` reloads the supervisor's helper modules from fresh source as well as
 the extension, preventing mixed old/new module exports during local upgrades.
 
-The parent immediately shows an **Agent Center** widget with the child name,
-branch, lifecycle phase or active tool, heartbeat age, and a redacted three-line
-tail of its visible cmux output. The newest child is followed automatically, so
-you do not need to leave the parent just to understand what is happening. The
-tail is bounded, transient UI state: it is never appended to the Pi session,
-journal, progress files, or transcripts. The child separately writes only fixed
-progress metadata every five seconds. Run `/agents`, then select the agent:
+The parent immediately shows an **Agent Center** widget with persistent child
+names, branches, lifecycle phases or active tools, heartbeat age, and a redacted
+three-line tail of the followed child's visible cmux output. The newest child is
+followed automatically, so you do not need to leave the parent just to
+understand what is happening. The tail is bounded, transient UI state: it is
+never appended to the Pi session, journal, progress files, or transcripts. The
+child separately writes only fixed progress metadata every five seconds.
+
+Active background `pi-subagents` appear in the same widget as `background`
+rows. Those rows are read from fixed status metadata only: run id, state, mode,
+cwd, agent labels, current tool, progress counts, and update time. Pi does not
+read background task prompts, outputs, or transcripts for the Agent Center. Use
+`/subagents-fleet` when you need the full background-run inspector.
+
+Run `/agents`, then select the agent:
 
 ```text
 Follow here
@@ -420,10 +431,13 @@ worktree paths, so the chooser never renders an `undefined` location.
 The on-screen hierarchy is explicit:
 
 ```text
-Agent Center · supervisor · 1 active agent
-└─ campaign-core · working: apply_patch · active now
+Agent Center · supervisor · 2 active agents
+├─ campaign-core · working: apply_patch · active now
    pi/campaign-core
    ↳ Running focused controller tests
+└─ background async-123 · running · 2/4 running · reviewer, scout · active now
+   /repo
+   inspect: /subagents-fleet
    manage: /agents (stays in this tab)
 ```
 
@@ -1123,15 +1137,20 @@ prompt, or transcript.
 message to the editor so it can be changed and resubmitted. Pi preserves the
 abandoned conversation branch and does not roll back filesystem changes.
 
-`/copy` scans only the latest visible Pi response for fenced shell blocks and
-command-shaped inline code, then opens a picker. Independent one-line commands
-in a shell block are offered separately. Compound scripts containing assignments,
-blank-line-separated setup, command substitutions, heredocs, or shell control
-blocks are offered as one complete multiline script. Commands containing quoted
-payloads that span lines, such as JSON passed to `curl -d`, also remain one
-script; continuations, indentation, quotes, and blank lines are preserved.
-Choose one command or **Entire response**;
-nothing is executed. The picker remains available as
+`/copy` scans the newest Pi response that contains fenced shell blocks or
+command-shaped inline code. It immediately copies the suggested command to the
+macOS clipboard, then opens a picker in case you want a different command or the
+entire response. Later prose-only replies do not evict the previous command, so
+you can keep talking and still `Cmd+V` the last recommended CLI when you are
+ready. A newer response with a copyable command replaces that cached source.
+Independent one-line commands in a shell block are offered separately. Compound
+scripts containing assignments, blank-line-separated setup, command
+substitutions, heredocs, or shell control blocks are offered as one complete
+multiline script. Commands containing quoted payloads that span lines, such as
+JSON passed to `curl -d`, also remain one script; continuations, indentation,
+quotes, and blank lines are preserved. Choose one command or **Entire
+response** to replace the clipboard contents; nothing is executed. The picker
+remains available as
 `/copy-command` on compatible runtimes that reserve `/copy`. This Pi build uses
 a guarded native delegation installed by:
 

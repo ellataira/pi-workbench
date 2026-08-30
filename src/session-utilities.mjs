@@ -82,6 +82,25 @@ export function latestAssistantText(entries) {
   return "";
 }
 
+export function latestCopyableAssistantText(entries) {
+  if (!Array.isArray(entries)) return { text: "", cached: false };
+  let latestText = "";
+  let sawLatestAssistant = false;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+    const text = textContent(entry.message.content);
+    if (!sawLatestAssistant) {
+      latestText = text;
+      sawLatestAssistant = true;
+    }
+    if (extractCliCommands(text, { limit: 1 }).length) {
+      return { text, cached: text !== latestText };
+    }
+  }
+  return { text: latestText, cached: false };
+}
+
 function shellBlockCommands(value) {
   let lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
   while (lines.length && !lines[0].trim()) lines.shift();

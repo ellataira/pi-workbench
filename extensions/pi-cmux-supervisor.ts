@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +32,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	const {
 		buildAgentCenterActions,
 		buildAgentChoices,
+		backgroundSubagentRoot,
 		buildChildCommand,
 		buildChildEnvironment,
 		buildDetachedForkCommand,
@@ -43,6 +44,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		childScreenTail,
 		formatChildProgressLines,
 		formatChildIdentityLines,
+		normalizeBackgroundSubagentRun,
 		normalizeChildProgress,
 		orchestrationPolicy,
 		parseWorkspaceIdentifiers,
@@ -191,6 +193,42 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		return new Map(entries.filter((entry) => entry[1]));
 	}
 
+	async function backgroundSubagentRuns({
+		states = ["queued", "running", "paused"],
+		limit = 8,
+	}: {
+		states?: string[];
+		limit?: number;
+	} = {}) {
+		const allowedStates = new Set(states);
+		let entries;
+		try {
+			entries = await readdir(backgroundSubagentRoot(), { withFileTypes: true });
+		} catch (error: any) {
+			if (error?.code === "ENOENT") return [];
+			throw error;
+		}
+		const runs = await Promise.all(
+			entries
+				.filter((entry) => entry.isDirectory())
+				.map(async (entry) => {
+					try {
+						const statusPath = path.join(backgroundSubagentRoot(), entry.name, "status.json");
+						return normalizeBackgroundSubagentRun(
+							JSON.parse(await readFile(statusPath, "utf8")),
+						);
+					} catch (error: any) {
+						if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
+						throw error;
+					}
+				}),
+		);
+		return runs
+			.filter((run: any) => run && allowedStates.has(run.state))
+			.sort((a: any, b: any) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+			.slice(0, Math.max(0, limit));
+	}
+
 	async function refreshProgressWidget(ctx = latestContext) {
 		if (!ctx || !currentParentSessionId || childProgressPath) return;
 		if (parentProgressRefreshing) return;
@@ -226,7 +264,10 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			const lines = formatChildProgressLines(
 				children,
 				await progressForChildren(children),
-				{ screenTailBySessionId },
+				{
+					screenTailBySessionId,
+					backgroundRuns: await backgroundSubagentRuns(),
+				},
 			);
 			ctx.ui.setWidget("pi-agents-progress", lines.length ? lines : undefined, {
 				placement: "belowEditor",
@@ -1004,7 +1045,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 
 	async function openAgentsChooser(ctx: any) {
 		const children = await statusChildren();
-		const choices = buildAgentChoices(children);
+		const choices = buildAgentChoices(children, await backgroundSubagentRuns());
 		const selected = await ctx.ui.select(
 			"Agent Center · stays in this tab",
 			choices.map((choice: any) => choice.label),
@@ -1013,6 +1054,16 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 		const choice = choices.find((candidate: any) => candidate.label === selected);
 		if (choice?.action === "child") {
 			await manageChild(choice.sessionId, ctx);
+			return;
+		}
+		if (choice?.action === "background-run") {
+			ctx.ui.notify(
+				[
+					"Background subagents are managed by the lightweight subagent fleet.",
+					"Inspect or steer them with /subagents-fleet.",
+				].join("\n"),
+				"info",
+			);
 			return;
 		}
 		const task = await ctx.ui.input(
@@ -1045,9 +1096,12 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					if (!value) throw new Error("Usage: /agents background <task>");
 					startBackground(value, ctx);
 				} else if (action === "list") {
-					const choices = buildAgentChoices(await statusChildren()).slice(2);
+					const choices = buildAgentChoices(
+						await statusChildren(),
+						await backgroundSubagentRuns(),
+					).slice(2);
 					ctx.ui.notify(
-						choices.length ? choices.map((choice: any) => choice.label).join("\n") : "No persistent agents.",
+						choices.length ? choices.map((choice: any) => choice.label).join("\n") : "No agents.",
 						"info",
 					);
 				} else if (action === "status") {
@@ -1055,7 +1109,11 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 						(child) => child.parentSessionId === ctx.sessionManager.getSessionId(),
 					);
 					const selected = value ? [findChild(owned, value)] : owned;
-					const lines = formatChildProgressLines(selected, await progressForChildren(selected));
+					const lines = formatChildProgressLines(
+						selected,
+						await progressForChildren(selected),
+						{ backgroundRuns: value ? [] : await backgroundSubagentRuns() },
+					);
 					ctx.ui.notify(
 						lines.length ? lines.join("\n") : "No delegated agents for this session.",
 						"info",

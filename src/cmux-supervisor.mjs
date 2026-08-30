@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 
 export function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -96,6 +97,83 @@ export function normalizeChildProgress(value) {
   };
 }
 
+function sanitizeTempScopeSegment(value) {
+  return String(value ?? "unknown").replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 80) || "unknown";
+}
+
+export function backgroundSubagentRoot({
+  env = process.env,
+  tmpdir = os.tmpdir,
+  getuid = typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
+  userInfo = os.userInfo,
+  homedir = os.homedir
+} = {}) {
+  const configured = env.PI_SUBAGENTS_TEMP_ROOT;
+  if (configured) return path.join(configured, "async-subagent-runs");
+  let scope = "";
+  if (typeof getuid === "function") {
+    scope = `uid-${getuid()}`;
+  } else {
+    try {
+      scope = `user-${userInfo().username}`;
+    } catch {
+      scope = `home-${homedir()}`;
+    }
+  }
+  return path.join(tmpdir(), `pi-subagents-${sanitizeTempScopeSegment(scope)}`, "async-subagent-runs");
+}
+
+function normalizeBackgroundTimestamp(value) {
+  const timestamp = typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+}
+
+function backgroundProgressLabel(value) {
+  const steps = Array.isArray(value?.steps) ? value.steps : [];
+  if (Number.isInteger(value?.currentStep) && Number.isInteger(value?.chainStepCount) && value.chainStepCount > 0) {
+    return `step ${value.currentStep + 1}/${value.chainStepCount}`;
+  }
+  if (!steps.length) return "";
+  const counts = new Map();
+  for (const step of steps) {
+    const status = typeof step?.status === "string" ? step.status : "unknown";
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  const running = counts.get("running") ?? 0;
+  const total = steps.length;
+  if (running) return `${running}/${total} running`;
+  const failed = counts.get("failed") ?? 0;
+  if (failed) return `${failed}/${total} failed`;
+  const completed = counts.get("completed") ?? 0;
+  if (completed) return `${completed}/${total} done`;
+  return `${total} step${total === 1 ? "" : "s"}`;
+}
+
+export function normalizeBackgroundSubagentRun(value) {
+  if (!value || typeof value.runId !== "string") return null;
+  const updatedAt = normalizeBackgroundTimestamp(value.lastUpdate ?? value.updatedAt ?? value.startedAt);
+  if (!updatedAt) return null;
+  const steps = Array.isArray(value.steps) ? value.steps : [];
+  const agents = [...new Set(steps
+    .map((step) => typeof step?.agent === "string" ? step.agent : typeof step?.label === "string" ? step.label : "")
+    .map((agent) => agent.replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 60))
+    .filter(Boolean))]
+    .slice(0, 4);
+  const currentTool = steps
+    .map((step) => typeof step?.currentTool === "string" ? step.currentTool : "")
+    .find(Boolean);
+  return {
+    id: value.runId.slice(0, 160),
+    state: typeof value.state === "string" ? value.state.slice(0, 40) : "unknown",
+    ...(typeof value.mode === "string" ? { mode: value.mode.slice(0, 40) } : {}),
+    ...(agents.length ? { agents } : {}),
+    ...(typeof value.cwd === "string" ? { cwd: value.cwd.slice(0, 240) } : {}),
+    ...(currentTool ? { currentTool: currentTool.replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 80) } : {}),
+    ...(backgroundProgressLabel(value) ? { progress: backgroundProgressLabel(value) } : {}),
+    updatedAt
+  };
+}
+
 function childActivityLabel(progress, now) {
   const updatedAt = progress?.updatedAt;
   const ageMs = Math.max(0, now - Date.parse(updatedAt));
@@ -146,21 +224,39 @@ export function childScreenTail(
 export function formatChildProgressLines(
   children,
   progressBySessionId,
-  { now = Date.now(), limit = 4, screenTailBySessionId = new Map() } = {}
+  { now = Date.now(), limit = 4, screenTailBySessionId = new Map(), backgroundRuns = [] } = {}
 ) {
   const visible = (Array.isArray(children) ? children : [])
     .map((child) => ({ child, progress: progressBySessionId?.get(child.sessionId) ?? null }))
     .filter(({ progress }) => progress?.phase !== "stopped")
     .slice(0, Math.max(1, limit));
-  if (!visible.length) return [];
+  const visibleBackground = (Array.isArray(backgroundRuns) ? backgroundRuns : [])
+    .filter((run) => run && !["completed", "failed", "cancelled", "stopped"].includes(run.state))
+    .slice(0, Math.max(0, limit - visible.length));
+  const total = visible.length + visibleBackground.length;
+  if (!total) return [];
   const lines = [
-    `Agent Center · supervisor · ${visible.length} active agent${visible.length === 1 ? "" : "s"}`
+    `Agent Center · supervisor · ${total} active agent${total === 1 ? "" : "s"}`
   ];
-  for (const [index, { child, progress }] of visible.entries()) {
+  const rows = [
+    ...visible.map((entry) => ({ type: "child", ...entry })),
+    ...visibleBackground.map((run) => ({ type: "background", run }))
+  ];
+  for (const [index, row] of rows.entries()) {
+    const tree = index === rows.length - 1 ? "└─" : "├─";
+    if (row.type === "background") {
+      const activity = childActivityLabel({ updatedAt: row.run.updatedAt }, now);
+      const agents = row.run.agents?.length ? ` · ${row.run.agents.join(", ")}` : "";
+      const progress = row.run.progress ? ` · ${row.run.progress}` : "";
+      lines.push(`${tree} background ${row.run.id.slice(0, 9)} · ${row.run.state}${progress}${agents} · ${activity}`);
+      lines.push(`   ${row.run.cwd || row.run.mode || "background subagent"}`);
+      lines.push("   inspect: /subagents-fleet");
+      continue;
+    }
+    const { child, progress } = row;
     const activity = progress?.updatedAt
       ? childActivityLabel(progress, now)
       : "startup pending";
-    const tree = index === visible.length - 1 ? "└─" : "├─";
     lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)} · ${activity}`);
     lines.push(`   ${child.branch || child.cwd || "isolated workspace"}`);
     for (const line of screenTailBySessionId.get(child.sessionId) ?? []) {
@@ -292,7 +388,7 @@ export async function waitForPath(
   }
 }
 
-export function buildAgentChoices(children = []) {
+export function buildAgentChoices(children = [], backgroundRuns = []) {
   return [
     {
       action: "persistent",
@@ -306,6 +402,11 @@ export function buildAgentChoices(children = []) {
       action: "child",
       sessionId: child.sessionId,
       label: `${child.name} · ${String(child.status ?? "unknown").replace(/^./, (value) => value.toUpperCase())} · ${child.worktreePath || child.cwd || child.branch || "workspace unavailable"}`
+    })),
+    ...(Array.isArray(backgroundRuns) ? backgroundRuns : []).map((run) => ({
+      action: "background-run",
+      runId: run.id,
+      label: `Background subagent · ${run.id.slice(0, 9)} · ${String(run.state ?? "unknown").replace(/^./, (value) => value.toUpperCase())} · ${run.agents?.length ? run.agents.join(", ") : run.mode || "unknown"} · ${run.cwd || "workspace unavailable"}`
     }))
   ];
 }

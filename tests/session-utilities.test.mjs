@@ -7,6 +7,7 @@ import {
   buildRewindChoices,
   extractCliCommands,
   latestAssistantText,
+  latestCopyableAssistantText,
   resolveSessionDeletionTarget
 } from "../src/session-utilities.mjs";
 
@@ -205,6 +206,75 @@ test("copy reads only the latest assistant prose from the active branch", () => 
   );
 });
 
+test("copy source keeps the latest CLI response across later prose-only turns", () => {
+  const entries = [
+    {
+      type: "message",
+      id: "assistant-1",
+      message: { role: "assistant", content: "Run `git status --short`." }
+    },
+    {
+      type: "message",
+      id: "user-1",
+      message: { role: "user", content: "What does that prove?" }
+    },
+    {
+      type: "message",
+      id: "assistant-2",
+      message: { role: "assistant", content: "It proves the working tree state." }
+    }
+  ];
+
+  assert.equal(latestAssistantText(entries), "It proves the working tree state.");
+  assert.deepEqual(latestCopyableAssistantText(entries), {
+    text: "Run `git status --short`.",
+    cached: true
+  });
+  assert.deepEqual(buildCopyChoices(latestCopyableAssistantText(entries).text).slice(0, 1), [
+    {
+      command: "git status --short",
+      label: "Suggested command · git status --short"
+    }
+  ]);
+});
+
+test("copy source advances when a newer response contains copyable CLI", () => {
+  assert.deepEqual(
+    latestCopyableAssistantText([
+      {
+        type: "message",
+        id: "assistant-1",
+        message: { role: "assistant", content: "Run `git status --short`." }
+      },
+      {
+        type: "message",
+        id: "assistant-2",
+        message: { role: "assistant", content: "Now run `npm test`." }
+      }
+    ]),
+    {
+      text: "Now run `npm test`.",
+      cached: false
+    }
+  );
+});
+
+test("copy source falls back to latest assistant text when no CLI exists", () => {
+  assert.deepEqual(
+    latestCopyableAssistantText([
+      {
+        type: "message",
+        id: "assistant-1",
+        message: { role: "assistant", content: "No command needed." }
+      }
+    ]),
+    {
+      text: "No command needed.",
+      cached: false
+    }
+  );
+});
+
 test("session utilities register rewind, rename, end, and a non-conflicting command picker", async () => {
   const source = await readFile(
     new URL("../extensions/pi-session-utilities.ts", import.meta.url),
@@ -214,6 +284,7 @@ test("session utilities register rewind, rename, end, and a non-conflicting comm
   assert.match(source, /navigateTree\(choice\.entryId,\s*\{\s*summarize:\s*false\s*\}\)/s);
   assert.match(source, /registerCommand\("copy-command"/);
   assert.doesNotMatch(source, /registerCommand\("copy"/);
+  assert.match(source, /copyToClipboard\(choices\[0\]\.command\)/);
   assert.match(source, /copyToClipboard\(choice\.command\)/);
   assert.match(source, /buildCopyChoices/);
   assert.match(source, /registerCommand\("rename"/);

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildAgentCenterActions,
   buildAgentChoices,
+  backgroundSubagentRoot,
   buildWorktreeArguments,
   buildChildCommand,
   buildChildEnvironment,
@@ -15,6 +16,7 @@ import {
   childScreenTail,
   formatChildIdentityLines,
   formatChildProgressLines,
+  normalizeBackgroundSubagentRun,
   normalizeChildProgress,
   orchestrationPolicy,
   parseWorkspaceRefs,
@@ -250,18 +252,31 @@ test("legacy children discover only non-child cmux workspaces as supervisor cand
 
 test("agent center uses plain language and keeps child management in the parent", () => {
   assert.deepEqual(
-    buildAgentChoices([
-      {
-        sessionId: "child-123",
-        name: "cache-safety",
-        status: "running",
-        cwd: "/repo"
-      }
-    ]),
+    buildAgentChoices(
+      [
+        {
+          sessionId: "child-123",
+          name: "cache-safety",
+          status: "running",
+          cwd: "/repo"
+        }
+      ],
+      [
+        {
+          id: "async-123456789",
+          state: "running",
+          mode: "parallel",
+          agents: ["reviewer", "scout"],
+          cwd: "/repo",
+          updatedAt: "2026-08-21T12:00:00.000Z"
+        }
+      ]
+    ),
     [
       { action: "persistent", label: "Start implementation agent…" },
       { action: "background", label: "Run parallel task…" },
-      { action: "child", sessionId: "child-123", label: "cache-safety · Running · /repo" }
+      { action: "child", sessionId: "child-123", label: "cache-safety · Running · /repo" },
+      { action: "background-run", runId: "async-123456789", label: "Background subagent · async-123 · Running · reviewer, scout · /repo" }
     ]
   );
   assert.deepEqual(buildAgentCenterActions(), [
@@ -271,6 +286,59 @@ test("agent center uses plain language and keeps child management in the parent"
     "Open child tab…",
     "More…"
   ]);
+});
+
+test("background subagent summaries use fixed status metadata without task text", () => {
+  assert.deepEqual(
+    normalizeBackgroundSubagentRun({
+      runId: "async-123456789",
+      state: "running",
+      mode: "workflow",
+      cwd: "/repo",
+      lastUpdate: Date.parse("2026-08-21T12:00:00.000Z"),
+      currentStep: 0,
+      chainStepCount: 2,
+      task: "secret delegated prompt",
+      steps: [
+        {
+          agent: "worker",
+          label: "main",
+          status: "running",
+          task: "secret child prompt",
+          currentTool: "apply_patch"
+        }
+      ]
+    }),
+    {
+      id: "async-123456789",
+      state: "running",
+      mode: "workflow",
+      agents: ["worker"],
+      cwd: "/repo",
+      currentTool: "apply_patch",
+      progress: "step 1/2",
+      updatedAt: "2026-08-21T12:00:00.000Z"
+    }
+  );
+});
+
+test("background subagent root matches pi-subagents temp scope", () => {
+  assert.equal(
+    backgroundSubagentRoot({
+      env: {},
+      tmpdir: () => "/tmp",
+      getuid: () => 501
+    }),
+    "/tmp/pi-subagents-uid-501/async-subagent-runs"
+  );
+  assert.equal(
+    backgroundSubagentRoot({
+      env: { PI_SUBAGENTS_TEMP_ROOT: "/custom/root" },
+      tmpdir: () => "/tmp",
+      getuid: () => 501
+    }),
+    "/custom/root/async-subagent-runs"
+  );
 });
 
 test("agent chooser uses lifecycle worktree paths instead of rendering undefined", () => {
@@ -367,6 +435,44 @@ test("parent progress keeps navigation behind the agent center", () => {
       "   manage: /agents (stays in this tab)"
     ]
   );
+});
+
+test("parent progress includes active background subagents separately from cmux children", () => {
+  const lines = formatChildProgressLines(
+    [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core" }],
+    new Map([["child-123", {
+      version: 1,
+      sessionId: "child-123",
+      phase: "thinking",
+      updatedAt: "2026-08-21T12:00:00.000Z"
+    }]]),
+    {
+      now: Date.parse("2026-08-21T12:00:05.000Z"),
+      backgroundRuns: [
+        {
+          id: "async-123456789",
+          state: "running",
+          mode: "parallel",
+          agents: ["reviewer", "scout"],
+          cwd: "/repo",
+          progress: "2/4 running",
+          updatedAt: "2026-08-21T12:00:01.000Z",
+          task: "secret prompt"
+        }
+      ]
+    }
+  );
+
+  assert.deepEqual(lines, [
+    "Agent Center · supervisor · 2 active agents",
+    "├─ campaign-core · thinking · active now",
+    "   pi/campaign-core",
+    "└─ background async-123 · running · 2/4 running · reviewer, scout · active now",
+    "   /repo",
+    "   inspect: /subagents-fleet",
+    "   manage: /agents (stays in this tab)"
+  ]);
+  assert.doesNotMatch(lines.join("\n"), /secret prompt/);
 });
 
 test("child identity widget explains how to return to the supervisor", () => {

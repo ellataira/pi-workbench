@@ -3,10 +3,22 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-08-29
+
+- Refined Agent Center background-run visibility and `/copy` clipboard behavior
+  while preserving prompt and transcript privacy.
+
 ## 2026-08-28
 
 - Marked child-side user answers in the parent progress widget so supervisors
   do not duplicate a question already answered in the child tab.
+- Included active background `pi-subagents` in `/agents`, `/agents list`,
+  `/agents status`, and the Agent Center widget without reading task prompts or
+  transcripts.
+- Kept `/copy` pointed at the last response with copyable CLI so later
+  prose-only turns do not evict the recommended command.
+- Made `/copy` immediately copy the suggested command to the clipboard before
+  opening the picker, so `Cmd+V` works without an extra selection.
 
 ## 2026-08-26
 

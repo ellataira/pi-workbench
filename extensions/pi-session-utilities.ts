@@ -15,7 +15,7 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 	const {
 		buildCopyChoices,
 		buildRewindChoices,
-		latestAssistantText,
+		latestCopyableAssistantText,
 		resolveSessionDeletionTarget,
 	} = await importFreshSourceModule(utilitiesPath);
 
@@ -103,15 +103,21 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 	pi.registerCommand("copy-command", {
 		description: "Copy a CLI command from the latest Pi response",
 		handler: async (_args, ctx) => {
-			const choices = buildCopyChoices(
-				latestAssistantText(ctx.sessionManager.getBranch()),
-			);
+			const source = latestCopyableAssistantText(ctx.sessionManager.getBranch());
+			const choices = buildCopyChoices(source.text);
 			if (!choices.length) {
 				ctx.ui.notify("There is no Pi response to copy yet.", "info");
 				return;
 			}
+			try {
+				await copyToClipboard(choices[0].command);
+			} catch {
+				// Keep the picker usable even if the host clipboard is temporarily unavailable.
+			}
 			const selected = await ctx.ui.select(
-				"Which command should be copied?",
+				source.cached
+					? "Suggested cached command copied. Pick another?"
+					: "Suggested command copied. Pick another?",
 				choices.map((choice: any) => choice.label),
 			);
 			if (!selected) return;
