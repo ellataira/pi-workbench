@@ -3,6 +3,11 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-08-30
+
+- Improved background-run visibility and immediate `/copy` clipboard behavior
+  while preserving prompt and transcript privacy.
+
 ## 2026-08-29
 
 - Refined Agent Center background-run visibility and `/copy` clipboard behavior
