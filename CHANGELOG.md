@@ -3,8 +3,16 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
-## 2026-08-30
+## 2026-08-31
 
+- Made Markdown review comments session-level across the review workspace, so
+  comments on multiple documents survive file switches and submit to Pi as one
+  combined batch.
+- Cleared submitted Markdown review comments per file once the addressed file
+  changes on disk, while preserving unsubmitted comments across navigation.
+- Kept open `/review` localhost pages watching for safe disk refreshes even
+  when the review window is backgrounded, and added a visible last-refreshed
+  timestamp.
 - Improved background-run visibility and immediate `/copy` clipboard behavior
   while preserving prompt and transcript privacy.
 

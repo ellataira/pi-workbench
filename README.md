@@ -15,7 +15,8 @@ session data.
 - persistent implementation agents in isolated worktrees plus lightweight
   background fan-out;
 - a visible pair-programming terminal where Pi observes commands that you run;
-- one session-aware Markdown and diff review workspace with inline comments;
+- one session-aware Markdown and diff review workspace with multi-file inline
+  comment batches;
 - session utilities for workspace switching, forks, resume cloning, rewind,
   command copying, rename, and deletion;
 - MCP recovery, project profiles, health audits, action inboxes, and Paddington,
@@ -64,8 +65,8 @@ pi
 - `/review` is the single review entry point. It opens the cumulative
   session workspace, where you can switch among last-turn, last-commit,
   branch-from-main, staged, unstaged, and complete-file views.
-- `/copy` selects one command, a complete multiline shell script, or the full
-  latest response.
+- `/copy` immediately copies the suggested command, then lets you choose another
+  command, a complete multiline shell script, or the full latest response.
 - `/rewind`, `/rename`, and `/end` resume from a prior message, rename the
   session, or permanently delete only the active native session file.
 - `/memory`, `/checkpoint`, and `/distill` expose memory status, explicit

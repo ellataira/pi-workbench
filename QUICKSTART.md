@@ -1020,11 +1020,14 @@ directory tree.
 
 Every marker also appears in the collapsible **Review comments** tray for batch
 review; its **Locate**, **Update**, and **Remove** controls remain available.
-Choose **Add N comments to Pi** to append the complete review batch to the Pi
-editor in one operation; Pi does not submit it automatically. Each batch item
-includes its current Markdown source line alongside the comment and context.
-Save and batch submission stay disabled until every opened inline textbox is
-completed or removed. The selection action uses the final rendered selection rectangle, and
+Markdown comments are staged at the review-workspace level, not just the
+current file, so you can comment on multiple documents, switch through the
+sidebar, and then choose **Add N comments to Pi** once. The button count includes
+comments staged on other Markdown files in the same review workspace, and Pi
+adds one combined batch grouped by file. Pi does not submit it automatically.
+Each batch item includes its current Markdown source line alongside the comment
+and context. Save and batch submission stay disabled until every opened inline
+textbox is completed or removed. The selection action uses the final rendered selection rectangle, and
 the comment editor is kept inside the viewport. Adding a marker preserves the
 passage's screen position instead of expanding the tray or scrolling the page
 away from it. Inline annotations use compact 12px pink styling, a flat
@@ -1061,12 +1064,18 @@ annotations exist in both the preview and staged Markdown source, then verifies
 that a submitted review reloads when the disk version changes.
 
 After **Add N comments to Pi**, the window enters **Waiting for file changes**.
-It checks the disk version every two seconds while visible. When Pi or another
-editor updates the file, the submitted review reloads automatically, clears its
-transient annotations, preserves the approximate scroll position, and remains
-open for verification. A clean preview also follows disk updates. Unsubmitted
-comments and direct Markdown edits are never discarded automatically;
-**Reload from disk** appears instead.
+It checks the disk version every two seconds while the localhost review page is
+open, even if the review window is backgrounded. The header shows **Last
+refreshed** with the most recent page load or disk reload time. When Pi or
+another editor updates the file, the submitted review reloads automatically,
+clears its transient annotations, preserves the approximate scroll position, and
+remains open for verification. A clean preview also follows disk updates.
+Unsubmitted comments across the review workspace and direct Markdown edits are
+never discarded automatically; **Reload from disk** appears instead.
+For multi-document review batches, submitted comments clear per document when
+that document's disk version changes. If you switch back to a submitted document
+after Pi has addressed it, the review pane drops its old comment chips and shows
+the fresh file contents.
 
 Review pages created by the current extension automatically reconnect after
 `/reload` using a file-scoped recovery capability. A pane created before that

@@ -12,6 +12,7 @@ import {
   decorateAnnotationHtml,
   formatDiffCommentBatchDraft,
   formatAnnotationBatchDraft,
+  formatMultiFileAnnotationBatchDraft,
   formatReviewDraft,
   insertMarkdownAnnotation,
   positionAnchoredOverlay,
@@ -713,6 +714,21 @@ test("markdown annotation batches become one bounded Pi draft addition", () => {
   assert.match(draft, /Context: First claim/);
   assert.match(draft, /2\. Line 27: Clarify scope\./);
   assert.ok(draft.length < 2_000);
+  assert.throws(
+    () => formatMultiFileAnnotationBatchDraft({
+      documents: [
+        {
+          sourcePath: "/repo/first.md",
+          annotations: [{ context: "First", comment: "", lineNumber: 1 }]
+        },
+        {
+          sourcePath: "/repo/second.md",
+          annotations: [{ context: "Second", comment: "Clarify.", lineNumber: 2 }]
+        }
+      ]
+    }),
+    /unfinished inline comment/
+  );
 });
 
 test("rendered Markdown selections map back through formatting and repeated text", () => {
@@ -1120,10 +1136,15 @@ test("loopback review service saves markdown atomically and keeps draft text tra
   assert.match(pageHtml, /file-state/);
   assert.match(pageHtml, /reviewSubmittedContent/);
   assert.match(pageHtml, /Updated after review/);
+  assert.match(pageHtml, /id="refresh-state"/);
+  assert.match(pageHtml, /Last refreshed/);
+  assert.match(pageHtml, /touchRefreshStatus/);
+  assert.doesNotMatch(pageHtml, /if\(document\.hidden\|\|checkingFileState\)return/);
   assert.match(pageHtml, /Save failed:/);
   assert.match(pageHtml, /openInlineEditorAt/);
   assert.match(pageHtml, /draft-batch/);
   assert.match(pageHtml, /annotation-update/);
+  assert.match(pageHtml, /workspaceAnnotationCount/);
 
   const renderResponse = await fetch(`${service.baseUrl}/api/${opened.capability}/render`, {
     method: "POST",
@@ -1440,6 +1461,87 @@ test("loopback review service stages editable annotations and appends one batch 
   });
   assert.equal(secondSaveResponse.status, 200);
   assert.equal(await readFile(markdownPath, "utf8"), secondContent);
+});
+
+test("session Markdown review batches survive file switches across documents", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-multi-doc-"));
+  const firstPath = path.join(root, "first.md");
+  const secondPath = path.join(root, "second.md");
+  await writeFile(firstPath, "First claim.\n", "utf8");
+  await writeFile(secondPath, "Second claim.\n", "utf8");
+  const drafts = [];
+  const service = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath: path.join(root, "comments.json"),
+    onAppendDraft: async (text) => drafts.push(text)
+  });
+  t.after(() => service.close());
+
+  const first = await service.openFiles([firstPath, secondPath], {
+    workspaceKey: "session-review"
+  });
+  const post = (capability, action, body = {}) => fetch(
+    `${service.baseUrl}/api/${capability}/${action}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    }
+  );
+  const firstAnnotated = await post(first.capability, "annotate", {
+    content: "First claim.\n",
+    start: 0,
+    end: "First claim".length,
+    comment: "Clarify first."
+  });
+  assert.equal(firstAnnotated.status, 200);
+  assert.equal((await firstAnnotated.json()).workspaceAnnotationCount, 1);
+
+  const navigationResponse = await post(first.capability, "navigation");
+  const secondUrl = (await navigationResponse.json()).navigation[1].url;
+  const secondPage = await fetch(secondUrl);
+  const secondCapability = secondPage.url.match(/\/review\/([a-f0-9]+)$/)?.[1];
+  assert.ok(secondCapability);
+  const secondHtml = await secondPage.text();
+  assert.match(secondHtml, /second\.md/);
+
+  const secondAnnotated = await post(secondCapability, "annotate", {
+    content: "Second claim.\n",
+    start: 0,
+    end: "Second claim".length,
+    comment: "Clarify second."
+  });
+  assert.equal(secondAnnotated.status, 200);
+  assert.equal((await secondAnnotated.json()).workspaceAnnotationCount, 2);
+
+  const firstAgainPage = await fetch(first.url);
+  const firstAgainHtml = await firstAgainPage.text();
+  assert.match(firstAgainHtml, /Clarify first\./);
+
+  const batchResponse = await post(secondCapability, "draft-batch");
+  assert.equal(batchResponse.status, 204);
+  assert.equal(drafts.length, 1);
+  assert.match(drafts[0], /Markdown review batch \(2 inline comments across 2 files\):/);
+  assert.match(drafts[0], /File: .*first\.md/);
+  assert.match(drafts[0], /Line 1: Clarify first\./);
+  assert.match(drafts[0], /File: .*second\.md/);
+  assert.match(drafts[0], /Line 1: Clarify second\./);
+  assert.equal(await readFile(firstPath, "utf8"), "First claim.\n");
+  assert.equal(await readFile(secondPath, "utf8"), "Second claim.\n");
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await writeFile(firstPath, "First claim addressed.\n", "utf8");
+  await writeFile(secondPath, "Second claim addressed.\n", "utf8");
+
+  const firstAfterAddressed = await fetch(first.url);
+  const firstAfterAddressedHtml = await firstAfterAddressed.text();
+  assert.match(firstAfterAddressedHtml, /First claim addressed\./);
+  assert.doesNotMatch(firstAfterAddressedHtml, /Clarify first\./);
+
+  const secondAfterAddressed = await fetch(secondPage.url);
+  const secondAfterAddressedHtml = await secondAfterAddressed.text();
+  assert.match(secondAfterAddressedHtml, /Second claim addressed\./);
+  assert.doesNotMatch(secondAfterAddressedHtml, /Clarify second\./);
 });
 
 test("loopback review service edits, removes, and batches inline diff comments", async (t) => {

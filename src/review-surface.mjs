@@ -243,6 +243,58 @@ export function formatAnnotationBatchDraft({
   return lines.join("\n").slice(0, MAX_BATCH_DRAFT_CHARS);
 }
 
+export function formatMultiFileAnnotationBatchDraft({ documents }) {
+  const candidates = (Array.isArray(documents) ? documents : [])
+    .map((document) => ({
+      sourcePath: document?.sourcePath,
+      annotations: (Array.isArray(document?.annotations) ? document.annotations : [])
+        .slice(0, MAX_BATCH_COMMENTS)
+    }))
+    .filter((document) => document.annotations.length);
+  const firstUnfinished = candidates.some((document) =>
+    document.annotations.some((annotation) => !normalizedAnnotationComment(annotation?.comment))
+  );
+  if (firstUnfinished) throw new Error("Finish or remove every unfinished inline comment");
+  const usableDocuments = candidates
+    .map((document) => ({
+      ...document,
+      annotations: document.annotations.filter((annotation) =>
+        normalizedAnnotationComment(annotation?.comment)
+      )
+    }))
+    .filter((document) => document.annotations.length);
+  const total = usableDocuments.reduce(
+    (sum, document) => sum + document.annotations.length,
+    0
+  );
+  if (!total) throw new Error("At least one Markdown annotation is required");
+  if (usableDocuments.length === 1) {
+    return formatAnnotationBatchDraft(usableDocuments[0]);
+  }
+  const lines = [
+    `Markdown review batch (${total} inline comments across ${usableDocuments.length} files):`
+  ];
+  let index = 1;
+  for (const document of usableDocuments) {
+    lines.push(`File: ${document.sourcePath || "review document"}`);
+    for (const annotation of document.annotations) {
+      const comment = normalizedAnnotationComment(annotation?.comment);
+      const context = normalizedSingleLine(annotation?.context, 1_000);
+      const lineNumber = Number(annotation?.lineNumber);
+      const location =
+        Number.isInteger(lineNumber) && lineNumber > 0
+          ? `Line ${lineNumber}: `
+          : "";
+      lines.push(`${index}. ${location}${comment}`);
+      if (context) lines.push(`   Context: ${context}`);
+      index += 1;
+      if (index > MAX_BATCH_COMMENTS) break;
+    }
+    if (index > MAX_BATCH_COMMENTS) break;
+  }
+  return lines.join("\n").slice(0, MAX_BATCH_DRAFT_CHARS);
+}
+
 function projectMarkdownText(source) {
   const text = String(source ?? "");
   const projected = [];
@@ -800,7 +852,7 @@ main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14
 #inline-editor{position:fixed;z-index:20;width:min(420px,calc(100vw - 24px));padding:12px;border:1px solid var(--annotation-border);border-radius:9px;background:var(--annotation-bg);box-shadow:0 12px 38px rgb(0 0 0/.24)}#inline-editor strong{display:block;margin-bottom:7px;color:var(--annotation-text)}.inline-editor-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:8px}#inline-comment-edit{width:100%;min-height:76px;padding:8px;border:1px solid var(--annotation-border);border-radius:6px;background:var(--card);color:var(--text);resize:vertical}
 #selection-action{position:fixed;z-index:18;padding:6px 10px;border:0;border-radius:999px;background:var(--accent);color:white;box-shadow:0 6px 20px rgb(0 0 0/.22);font-weight:650}
 #diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
-.status{color:var(--muted);font-size:12px}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
+.status{color:var(--muted);font-size:12px}.refresh-state{white-space:nowrap}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
 .review-shell{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);width:100%;align-items:start}.review-sidebar{position:sticky;top:51px;height:calc(100vh - 51px);overflow:auto;padding:14px 10px;border-right:1px solid var(--border);background:var(--card)}.review-sidebar strong{display:block;padding:10px 9px 5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.review-sidebar strong:first-child{padding-top:3px}.review-sidebar a{display:block;margin:2px 0;padding:8px 9px;border-radius:7px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}.review-sidebar a.mode{border:1px solid var(--border);margin-bottom:5px}.review-sidebar a .nav-name{display:block;font-weight:650}.review-sidebar a small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:400}.review-sidebar a:hover{background:var(--bg)}.review-sidebar a.active{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);font-weight:650}.review-sidebar a.active small{color:inherit;opacity:.78}.nav-group{margin-top:7px;border-top:1px solid var(--border)}.nav-group summary{padding:10px 9px 6px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;cursor:pointer}.nav-group summary:hover{color:var(--text)}
 @media(max-width:800px){header{flex-wrap:wrap}header .review-identity{flex:1 0 100%}.review-identity strong,.review-identity small{max-width:100%}.review-shell{grid-template-columns:1fr}.review-sidebar{position:sticky;top:91px;z-index:4;display:flex;height:auto;max-height:34vh;gap:5px;overflow:auto;padding:8px;border-right:0;border-bottom:1px solid var(--border)}.review-sidebar strong{position:sticky;left:0;flex:0 0 auto;padding:8px 5px;background:var(--card)}.review-sidebar a{flex:0 0 auto;max-width:240px}.nav-group{flex:0 0 min(280px,80vw);margin-top:0;border-top:0}.nav-group summary{padding:8px 5px}main{padding:0 12px}#preview{padding:22px 18px}.annotation-card{grid-template-columns:1fr}.annotation-actions{justify-content:flex-end}}
 </style>
@@ -812,6 +864,7 @@ main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14
     <small title="${escapeHtml(state.sourcePath)}">${escapeHtml(state.displayScope ?? state.sourcePath)}</small>
   </span>
   <span id="status" class="status">Ready</span>
+  <span id="refresh-state" class="status refresh-state">Last refreshed: loading…</span>
   <span id="dirty-state" class="status dirty ${state.kind === "markdown" ? "" : "hidden"}">Saved</span>
   <button id="toggle" class="${state.kind === "markdown" ? "" : "hidden"}">Edit source</button>
   <button id="annotate" class="${state.kind === "markdown" ? "" : "hidden"}">Comment selection</button>
@@ -854,6 +907,7 @@ const preview=document.getElementById("preview");
 const diff=document.getElementById("diff");
 const comment=document.getElementById("comment");
 const statusEl=document.getElementById("status");
+const refreshState=document.getElementById("refresh-state");
 const annotationList=document.getElementById("annotation-list");
 const annotationCount=document.getElementById("annotation-count");
 const annotationPanel=document.getElementById("annotations");
@@ -872,6 +926,7 @@ let showingPreview=state.kind==="markdown";
 let savedContent=state.content;
 let selectedRows=[];
 let annotations=state.annotations||[];
+let workspaceAnnotationCount=state.workspaceAnnotationCount||annotations.length;
 let annotationRefreshTimer;
 let renderedSelection=null;
 let actionSelection=null;
@@ -880,6 +935,18 @@ let addingAnnotation=false;
 let reviewSubmittedContent=null;
 let checkingFileState=false;
 const setStatus=(text)=>{statusEl.textContent=text;};
+function formatRefreshTime(){
+  return new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+function touchRefreshStatus(label="Last refreshed"){
+  if(refreshState)refreshState.textContent=label+": "+formatRefreshTime();
+}
+touchRefreshStatus();
+function updateWorkspaceAnnotationCount(result){
+  workspaceAnnotationCount=Number.isInteger(result?.workspaceAnnotationCount)
+    ? result.workspaceAnnotationCount
+    : annotations.length;
+}
 function clearRenderedSelection(){
   selectionAction.classList.add("hidden");selectionAction.style.visibility="";renderedSelection=null;actionSelection=null;
 }
@@ -980,7 +1047,7 @@ async function addRenderedAnnotation(selectionOverride){
   addingAnnotation=true;
   try{
     const result=await api("annotate-selection",{content:editor.value,...selection,comment:""});
-    editor.value=result.content;annotations=result.annotations;renderAnnotationTray();await refreshPreview();openInlineEditorAt(result.annotationIndex,selection.viewportTop);setStatus("Write the comment beside the selected passage");
+    editor.value=result.content;annotations=result.annotations;updateWorkspaceAnnotationCount(result);renderAnnotationTray();await refreshPreview();openInlineEditorAt(result.annotationIndex,selection.viewportTop);setStatus("Write the comment beside the selected passage");
   }catch(error){setStatus(error.message)}
   finally{addingAnnotation=false}
 }
@@ -1027,7 +1094,7 @@ function wireInlineAnnotations(){
 }
 async function mutateInlineAnnotation(index,value,status,{addAnother=false}={}){
   const result=await api("annotation-update",{content:editor.value,index,comment:value});
-  editor.value=result.content;annotations=result.annotations;renderAnnotationTray();closeInlineEditor();
+  editor.value=result.content;annotations=result.annotations;updateWorkspaceAnnotationCount(result);renderAnnotationTray();closeInlineEditor();
   if(showingPreview)await refreshPreview();
   if(addAnother){commentMode=true;setStatus("Comment saved — select another passage")}
   else setStatus(status);
@@ -1083,10 +1150,11 @@ function renderAnnotationTray(){
   const dirty=editor.value!==savedContent;
   dirtyState.textContent=dirty?"Unsaved":"Saved";
   dirtyState.classList.toggle("unsaved",dirty);
-  annotationCount.textContent=String(annotations.length);
+  const batchCount=Math.max(annotations.length,workspaceAnnotationCount);
+  annotationCount.textContent=String(batchCount);
   sendButton.disabled=state.kind==="markdown"&&hasPending;
   saveButton.disabled=state.kind==="markdown"&&(hasPending||!dirty);
-  sendButton.textContent=state.kind==="markdown"&&hasPending?"Finish inline comment":state.kind==="markdown"&&annotations.length?(annotations.length===1?"Add comment to Pi":"Add "+annotations.length+" comments to Pi"):"Add to Pi";
+  sendButton.textContent=state.kind==="markdown"&&hasPending?"Finish inline comment":state.kind==="markdown"&&batchCount?(batchCount===1?"Add comment to Pi":"Add "+batchCount+" comments to Pi"):"Add to Pi";
   annotationList.innerHTML="";
   if(!annotations.length){
     const empty=document.createElement("div");empty.className="empty";empty.textContent="Select text directly in the rendered document, then choose Comment.";annotationList.appendChild(empty);return;
@@ -1111,7 +1179,7 @@ editor.addEventListener("input",()=>{
   dirtyState.textContent="Unsaved";dirtyState.classList.add("unsaved");saveButton.disabled=annotations.some((annotation)=>!annotation.comment.trim());
   clearTimeout(annotationRefreshTimer);
   annotationRefreshTimer=setTimeout(async()=>{
-    try{const result=await api("annotations",{content:editor.value});annotations=result.annotations;renderAnnotationTray()}catch{}
+    try{const result=await api("annotations",{content:editor.value});annotations=result.annotations;updateWorkspaceAnnotationCount(result);renderAnnotationTray()}catch{}
   },250);
 });
 document.getElementById("annotate").onclick=async()=>{
@@ -1120,7 +1188,7 @@ document.getElementById("annotate").onclick=async()=>{
   if(start===end){setStatus("Select Markdown text first");editor.focus();return}
   try{
     const result=await api("annotate",{content:editor.value,start,end,comment:note});
-    editor.value=result.content;annotations=result.annotations;comment.value="";renderAnnotationTray();await setPreview(true);const annotationIndex=annotations.findIndex((annotation)=>annotation.start===end);openInlineEditorAt(annotationIndex);setStatus("Write the inline comment at the selected passage");
+    editor.value=result.content;annotations=result.annotations;updateWorkspaceAnnotationCount(result);comment.value="";renderAnnotationTray();await setPreview(true);const annotationIndex=annotations.findIndex((annotation)=>annotation.start===end);openInlineEditorAt(annotationIndex);setStatus("Write the inline comment at the selected passage");
   }catch(error){setStatus(error.message)}
 };
 document.getElementById("save").onclick=async()=>{
@@ -1137,10 +1205,11 @@ document.getElementById("save").onclick=async()=>{
 async function reloadCurrentFile(statusText){
   const scrollTop=window.scrollY;
   const result=await api("reload");
-  state.content=result.content;editor.value=result.content;savedContent=result.content;state.mtimeMs=result.mtimeMs;annotations=result.annotations||[];reviewSubmittedContent=null;reloadFileButton.classList.add("hidden");closeInlineEditor();
+  state.content=result.content;editor.value=result.content;savedContent=result.content;state.mtimeMs=result.mtimeMs;annotations=result.annotations||[];updateWorkspaceAnnotationCount(result);reviewSubmittedContent=null;reloadFileButton.classList.add("hidden");closeInlineEditor();
   if(state.kind==="markdown"){renderAnnotationTray();if(showingPreview)await refreshPreview()}
   else if(state.kind==="diff"){diffLines=parseDiff(result.content);selectedRows=[];renderDiff()}
   window.scrollTo(0,scrollTop);
+  touchRefreshStatus();
   setStatus(statusText);
 }
 reloadFileButton.onclick=async()=>{
@@ -1150,7 +1219,7 @@ reloadFileButton.onclick=async()=>{
   }catch(error){setStatus("Reload failed: "+error.message)}
 };
 async function checkFileState(){
-  if(document.hidden||checkingFileState)return;
+  if(checkingFileState)return;
   checkingFileState=true;
   try{
     const result=await api("file-state");
@@ -1258,6 +1327,7 @@ export async function createReviewServer({
   }
   const capabilities = new Map();
   const workspaces = new Map();
+  const markdownDrafts = new Map();
   const bridgeToken = randomBytes(32).toString("hex");
   let commentMutation = Promise.resolve();
 
@@ -1287,7 +1357,15 @@ export async function createReviewServer({
 
   async function openFile(filePath, display = {}) {
     const resolved = await resolveReviewPath(filePath, allowedRoots);
-    const content = await readFile(resolved.path, "utf8");
+    const diskContent = await readFile(resolved.path, "utf8");
+    let markdownDraft = resolved.kind === "markdown"
+      ? markdownDrafts.get(resolved.path)
+      : undefined;
+    if (markdownDraft?.submitted && markdownDraft.mtimeMs !== resolved.info.mtimeMs) {
+      markdownDrafts.delete(resolved.path);
+      markdownDraft = undefined;
+    }
+    const content = markdownDraft?.content ?? diskContent;
     const capability = randomBytes(24).toString("hex");
     const comments = resolved.kind === "diff"
       ? (await readComments(commentsPath)).filter((entry) => entry.sourcePath === resolved.path && !entry.resolved)
@@ -1305,7 +1383,7 @@ export async function createReviewServer({
       mode: resolved.info.mode & 0o777,
       comments,
       annotations: resolved.kind === "markdown"
-        ? parseMarkdownAnnotations(content)
+        ? (markdownDraft?.annotations ?? parseMarkdownAnnotations(content))
         : [],
       recoveryToken: recoveryTokenFor(resolved.path)
     });
@@ -1314,6 +1392,63 @@ export async function createReviewServer({
       url: `${baseUrl}/review/${capability}`,
       sourcePath: resolved.path
     };
+  }
+
+  function stageMarkdownDraft(entry, content) {
+    const annotations = parseMarkdownAnnotations(content);
+    entry.content = content;
+    entry.annotations = annotations;
+    markdownDrafts.set(entry.sourcePath, {
+      content,
+      annotations,
+      mtimeMs: entry.mtimeMs,
+      submitted: false,
+      updatedAt: new Date().toISOString()
+    });
+    return annotations;
+  }
+
+  async function refreshSubmittedMarkdownDraft(entry) {
+    if (entry.kind !== "markdown") return;
+    const draft = markdownDrafts.get(entry.sourcePath);
+    if (!draft?.submitted) return;
+    const current = await stat(entry.sourcePath);
+    if (current.mtimeMs === draft.mtimeMs) return;
+    const content = await readFile(entry.sourcePath, "utf8");
+    markdownDrafts.delete(entry.sourcePath);
+    entry.content = content;
+    entry.mtimeMs = current.mtimeMs;
+    entry.mode = current.mode & 0o777;
+    entry.annotations = parseMarkdownAnnotations(content);
+  }
+
+  function workspaceMarkdownDraftDocuments(entry) {
+    const workspaceItems = entry.workspaceToken
+      ? workspaces.get(entry.workspaceToken)
+      : undefined;
+    const paths = workspaceItems?.length
+      ? workspaceItems.map((item) => item.filePath)
+      : [entry.sourcePath];
+    const documents = [];
+    const seen = new Set();
+    for (const sourcePath of paths) {
+      if (seen.has(sourcePath)) continue;
+      seen.add(sourcePath);
+      const draft = markdownDrafts.get(sourcePath);
+      if (!draft?.annotations?.length) continue;
+      documents.push({
+        sourcePath,
+        annotations: draft.annotations
+      });
+    }
+    return documents;
+  }
+
+  function workspaceMarkdownAnnotationCount(entry) {
+    return workspaceMarkdownDraftDocuments(entry).reduce(
+      (sum, document) => sum + document.annotations.length,
+      0
+    );
   }
 
   function workspaceNavigation(token, index) {
@@ -1337,6 +1472,9 @@ export async function createReviewServer({
     state.workspaceToken = token;
     state.workspaceIndex = index;
     state.navigation = workspaceNavigation(token, index);
+    if (state.kind === "markdown") {
+      state.workspaceAnnotationCount = workspaceMarkdownAnnotationCount(state);
+    }
     return { ...opened, count: items.length };
   }
 
@@ -1394,6 +1532,10 @@ export async function createReviewServer({
         const capability = pageMatch[1];
         const entry = capabilities.get(capability);
         if (!entry) return sendJson(response, 404, { error: "Review capability not found" });
+        await refreshSubmittedMarkdownDraft(entry);
+        if (entry.kind === "markdown") {
+          entry.workspaceAnnotationCount = workspaceMarkdownAnnotationCount(entry);
+        }
         const scriptNonce = randomBytes(18).toString("base64url");
         const html = reviewPageHtml({ ...entry, capability }, scriptNonce);
         const encoded = Buffer.from(html);
@@ -1507,9 +1649,11 @@ export async function createReviewServer({
             body.comment,
             { allowEmpty: true }
           );
+          const annotations = stageMarkdownDraft(entry, updated.content);
           return sendJson(response, 200, {
             content: updated.content,
-            annotations: parseMarkdownAnnotations(updated.content)
+            annotations,
+            workspaceAnnotationCount: workspaceMarkdownAnnotationCount(entry)
           });
         }
 
@@ -1541,7 +1685,7 @@ export async function createReviewServer({
               body.comment,
               { allowEmpty: true }
             );
-            const annotations = parseMarkdownAnnotations(updated.content);
+            const annotations = stageMarkdownDraft(entry, updated.content);
             const annotationIndex = annotations.findIndex(
               (annotation) => annotation.start === selection.end
             );
@@ -1549,7 +1693,8 @@ export async function createReviewServer({
               content: updated.content,
               annotations,
               annotationIndex,
-              selection
+              selection,
+              workspaceAnnotationCount: workspaceMarkdownAnnotationCount(entry)
             });
           } catch (error) {
             return sendJson(response, 400, { error: String(error?.message ?? error) });
@@ -1565,15 +1710,21 @@ export async function createReviewServer({
             Number(body.index),
             body.comment == null ? null : body.comment
           );
-          return sendJson(response, 200, updated);
+          stageMarkdownDraft(entry, updated.content);
+          return sendJson(response, 200, {
+            ...updated,
+            workspaceAnnotationCount: workspaceMarkdownAnnotationCount(entry)
+          });
         }
 
         if (action === "annotations") {
           if (entry.kind !== "markdown") return sendJson(response, 400, { error: "Only Markdown has inline annotations" });
           const content = String(body.content ?? "");
           if (Buffer.byteLength(content) > MAX_FILE_BYTES) return sendJson(response, 413, { error: "Markdown is too large" });
+          const annotations = stageMarkdownDraft(entry, content);
           return sendJson(response, 200, {
-            annotations: parseMarkdownAnnotations(content)
+            annotations,
+            workspaceAnnotationCount: workspaceMarkdownAnnotationCount(entry)
           });
         }
 
@@ -1597,10 +1748,12 @@ export async function createReviewServer({
           entry.annotations = entry.kind === "markdown"
             ? parseMarkdownAnnotations(content)
             : [];
+          if (entry.kind === "markdown") markdownDrafts.delete(entry.sourcePath);
           return sendJson(response, 200, {
             content,
             mtimeMs: entry.mtimeMs,
-            annotations: entry.annotations
+            annotations: entry.annotations,
+            workspaceAnnotationCount: workspaceMarkdownAnnotationCount(entry)
           });
         }
 
@@ -1630,6 +1783,7 @@ export async function createReviewServer({
           const updated = await stat(entry.sourcePath);
           entry.content = content;
           entry.mtimeMs = updated.mtimeMs;
+          stageMarkdownDraft(entry, content);
           return sendJson(response, 200, { mtimeMs: entry.mtimeMs });
         }
 
@@ -1649,12 +1803,30 @@ export async function createReviewServer({
 
         if (action === "draft-batch") {
           if (entry.kind !== "markdown") return sendJson(response, 400, { error: "Only Markdown accepts annotation batches" });
-          const addition = formatAnnotationBatchDraft({
-            sourcePath: entry.sourcePath,
-            annotations: body.content == null
-              ? body.annotations
-              : parseMarkdownAnnotations(String(body.content))
+          if (body.content != null) {
+            stageMarkdownDraft(entry, String(body.content));
+          } else if (Array.isArray(body.annotations)) {
+            markdownDrafts.set(entry.sourcePath, {
+              content: entry.content,
+              annotations: body.annotations,
+              mtimeMs: entry.mtimeMs,
+              submitted: false,
+              updatedAt: new Date().toISOString()
+            });
+          }
+          const addition = formatMultiFileAnnotationBatchDraft({
+            documents: workspaceMarkdownDraftDocuments(entry)
           });
+          for (const document of workspaceMarkdownDraftDocuments(entry)) {
+            const draft = markdownDrafts.get(document.sourcePath);
+            if (draft) {
+              markdownDrafts.set(document.sourcePath, {
+                ...draft,
+                submitted: true,
+                updatedAt: new Date().toISOString()
+              });
+            }
+          }
           await onAppendDraft(addition);
           return sendEmpty(response);
         }
