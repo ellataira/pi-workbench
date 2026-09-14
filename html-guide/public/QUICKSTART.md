@@ -950,9 +950,9 @@ From Pi:
 ```
 
 Running `/review` with no argument opens the cumulative session review workspace
-in a dedicated cmux popout. Later `/review` calls focus and navigate that same
-window instead of creating more tabs. The file sidebar contains paths changed
-during the current Pi session, up to 100, plus a separate **Relevant files**
+in a dedicated cmux popout. Later `/review` calls focus that same window and
+replace the current review page instead of creating more browser tabs. The file
+sidebar contains paths changed during the current Pi session, up to 100, plus a separate **Relevant files**
 shortlist of up to eight paths. The shortlist is selected from substantive work
 or explicitly pinned; it does not scan every plan-like Markdown file. It stores
 only path, reason, source, and timestamp metadata and survives `/reload`.
@@ -1008,15 +1008,17 @@ focused textbox opens beside that exact passage. Enter the comment and choose
 **Update**; it becomes an `[an: ...]` chip at that location. Click the chip to
 edit or remove it again. **Edit source** exposes the raw Markdown editor when
 you need to change document text directly; **Preview** returns to the rendered
-document. An open review pane automatically reconnects to the same local review
+document. Toggling between source editing and rendered preview preserves your
+approximate scroll position. An open review pane automatically reconnects to the same local review
 session after `/reload`; the file-scoped recovery token does not grant access to
 other local files.
 
 The preview uses GitHub-flavored Markdown, including headings, lists and task
-lists, tables, blockquotes, links, emphasis, fenced code, and document-relative
-images. Raw HTML is displayed as text instead of executed, unsafe link
-protocols are blocked, and relative images may only load from the document's
-directory tree.
+lists, tables, blockquotes, links, emphasis, fenced code, document-relative
+images, and safe `<details>` / `<summary>` disclosure blocks. Raw HTML outside
+that allowlist is displayed as text instead of executed, unsafe link protocols
+are blocked, and relative images may only load from the document's directory
+tree.
 
 Every marker also appears in the collapsible **Review comments** tray for batch
 review; its **Locate**, **Update**, and **Remove** controls remain available.
@@ -1025,8 +1027,9 @@ current file, so you can comment on multiple documents, switch through the
 sidebar, and then choose **Add N comments to Pi** once. The button count includes
 comments staged on other Markdown files in the same review workspace, and Pi
 adds one combined batch grouped by file. Pi does not submit it automatically.
-Each batch item includes its current Markdown source line alongside the comment
-and context. Save and batch submission stay disabled until every opened inline
+The review panel shows a short toast when the batch is inserted into Pi. Each
+batch item includes its current Markdown source line, the highlighted excerpt,
+and nearby context alongside the comment. Save and batch submission stay disabled until every opened inline
 textbox is completed or removed. The selection action uses the final rendered selection rectangle, and
 the comment editor is kept inside the viewport. Adding a marker preserves the
 passage's screen position instead of expanding the tray or scrolling the page
@@ -1083,10 +1086,12 @@ recovery support was installed must be reopened once with `/review` or
 `/review <path>`. Normal file-version updates then refresh in place.
 
 The annotated Markdown changes on disk only when **Save** is chosen. Saves use
-an atomic replacement and report **Saved to disk** on success. If another
-process changed the file, the stale viewer cannot overwrite it: the exact error
-appears in the header and **Reload from disk** becomes available. That action
-requires confirmation because it discards the viewer's unsaved changes.
+an atomic replacement, report **Saved to disk** on success, and return the panel
+to rendered-preview mode so you can immediately verify the saved document. If
+another process changed the file, the stale viewer cannot overwrite it: the
+exact error appears in the header and **Reload from disk** becomes available.
+That action requires confirmation because it discards the viewer's unsaved
+changes.
 `Cmd-S`/`Ctrl-S` saves, `Cmd-Enter`/`Ctrl-Enter` updates the active inline
 comment, and `Escape` closes it. Non-Markdown text files are read-only.
 
@@ -1109,10 +1114,15 @@ Session review ready — run /review
 The session list accumulates across turns rather than being replaced by the
 next turn, and touching an existing entry moves it to its modification-time
 position. Repository Git status never backfills unrelated files into this list.
+An already-open localhost review page refreshes its sidebar every two seconds,
+including after later agent turns and while the review window is backgrounded.
 The sidebar keeps **Review modes** visible, shows the bounded task-specific
-**Relevant files** group, shows eight cross-turn files under **Recent edits · newest
-first**, and hides the rest behind the collapsed **Older this session · N
-files** section. **Last Pi turn** is the
+**Relevant files** group, shows eight cross-turn files under **Recent edits ·
+newest first**, and hides the rest behind the collapsed **Older this session · N
+files** section. Automatic relevance keeps up to 12 high-signal files from a
+turn, and the combined agent/user-pinned relevant set can hold up to 24 files.
+Generated output, vendored trees, lockfiles, runtime state, and internal
+artifacts remain filtered out. **Last Pi turn** is the
 default opening view. Selecting an older file automatically expands its section.
 If a turn makes no changes, **Last Pi turn** shows an explicit empty state rather
 than older work. Turn snapshots are bounded to

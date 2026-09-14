@@ -100,7 +100,7 @@ export function restoreReviewShortlist(entries, cwd, options = {}) {
   });
 }
 
-export function automaticReviewShortlistCandidates(filePaths, cwd, { limit = 3 } = {}) {
+export function automaticReviewShortlistCandidates(filePaths, cwd, { limit = 12 } = {}) {
   return uniqueAbsolutePaths(filePaths, cwd)
     .map((filePath, index) => {
       const relative = path.relative(path.resolve(cwd), filePath);

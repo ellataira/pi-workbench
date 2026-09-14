@@ -388,6 +388,55 @@ test("automatic review relevance excludes noisy support files", () => {
   );
 });
 
+test("automatic review relevance keeps a bounded task-sized set instead of only three files", () => {
+  const files = [
+    "/repo/docs/campaign-plan.md",
+    "/repo/docs/rollout-spec.md",
+    "/repo/src/controller.py",
+    "/repo/src/interfaces.py",
+    "/repo/src/runner.py",
+    "/repo/src/controller_test.py",
+    "/repo/src/interfaces_test.py",
+    "/repo/src/runner_test.py",
+    "/repo/scripts/smoke.py",
+    "/repo/README.md",
+    "/repo/uv.lock",
+    "/repo/generated/schema.md",
+    "/repo/vendor/generated.go"
+  ];
+  assert.deepEqual(
+    automaticReviewShortlistCandidates(files, "/repo"),
+    [
+      "/repo/docs/campaign-plan.md",
+      "/repo/docs/rollout-spec.md",
+      "/repo/src/controller.py",
+      "/repo/src/interfaces.py",
+      "/repo/src/runner.py",
+      "/repo/scripts/smoke.py",
+      "/repo/README.md",
+      "/repo/src/controller_test.py",
+      "/repo/src/interfaces_test.py",
+      "/repo/src/runner_test.py"
+    ]
+  );
+});
+
+test("review shortlist can retain a larger relevant set without leaking outside roots", () => {
+  const additions = Array.from({ length: 14 }, (_, index) => ({
+    filePath: `/repo/src/file-${index}.py`,
+    reason: "primary-change",
+    source: "automatic"
+  })).concat({
+    filePath: "/outside/secret.md",
+    reason: "primary-change",
+    source: "automatic"
+  });
+  assert.equal(
+    updateReviewShortlist([], additions, "/repo", { allowedRoot: "/repo", limit: 24 }).length,
+    14
+  );
+});
+
 test("recent session edits span turns while older files stay collapsed", () => {
   const files = Array.from({ length: 11 }, (_, index) => `/repo/file-${index}.md`);
   const targets = buildSessionReviewTargets({
@@ -650,6 +699,7 @@ test("markdown annotations are inserted after the exact selected range", () => {
   );
   assert.equal(pending.content, "Keep this sentence [an: ].\n");
   assert.equal(parseMarkdownAnnotations(pending.content)[0].comment, "");
+  assert.equal(parseMarkdownAnnotations(pending.content)[0].highlight, "Keep this sentence");
   assert.match(
     decorateAnnotationHtml("<p>Keep this sentence [an: ].</p>"),
     /data-annotation-index="0"/
@@ -666,14 +716,15 @@ test("markdown annotations render, edit, and remove as a staged review set", () 
   const annotations = parseMarkdownAnnotations(source);
 
   assert.deepEqual(
-    annotations.map(({ comment, context, lineNumber }) => ({
+    annotations.map(({ comment, context, highlight, lineNumber }) => ({
       comment,
       context,
+      highlight,
       lineNumber
     })),
     [
-      { comment: "Add evidence", context: "First claim", lineNumber: 1 },
-      { comment: "Clarify scope", context: "Second claim", lineNumber: 2 }
+      { comment: "Add evidence", context: "First claim", highlight: "First claim", lineNumber: 1 },
+      { comment: "Clarify scope", context: "Second claim", highlight: "Second claim", lineNumber: 2 }
     ]
   );
   assert.match(
@@ -683,6 +734,11 @@ test("markdown annotations render, edit, and remove as a staged review set", () 
   assert.match(
     decorateAnnotationHtml("<p>[an: First] and [an: Second]</p>"),
     /data-annotation-index="0"[\s\S]*data-annotation-index="1"/
+  );
+  assert.deepEqual(
+    parseMarkdownAnnotations("First claim [an: First]. Second claim [an: Second].\n")
+      .map((annotation) => annotation.highlight),
+    ["First claim", "First claim. Second claim"]
   );
 
   const edited = updateMarkdownAnnotation(source, 0, "Cite the benchmark.");
@@ -711,6 +767,7 @@ test("markdown annotation batches become one bounded Pi draft addition", () => {
 
   assert.match(draft, /2 inline comments/);
   assert.match(draft, /1\. Line 12: Add evidence\./);
+  assert.match(draft, /Highlighted: First claim/);
   assert.match(draft, /Context: First claim/);
   assert.match(draft, /2\. Line 27: Clarify scope\./);
   assert.ok(draft.length < 2_000);
@@ -829,7 +886,7 @@ test("rendered Markdown selections map back through formatting and repeated text
   });
 });
 
-test("GFM rendering covers structured Markdown while escaping raw HTML", async () => {
+test("GFM rendering covers structured Markdown, safe details, and escaped raw HTML", async () => {
   const html = await renderMarkdownForReview([
     "# Heading",
     "",
@@ -846,6 +903,11 @@ test("GFM rendering covers structured Markdown while escaping raw HTML", async (
     "",
     "[unsafe](javascript:alert(1))",
     "",
+    "<details open onclick=\"alert(1)\">",
+    "<summary class=\"ignored\">More context</summary>",
+    "Collapsed <script>alert('still no')</script> text.",
+    "</details>",
+    "",
     "```js",
     "const value = 1;",
     "```",
@@ -861,6 +923,10 @@ test("GFM rendering covers structured Markdown while escaping raw HTML", async (
   assert.match(html, /<strong>strong<\/strong>/);
   assert.match(html, /href="https:\/\/example\.com"/);
   assert.doesNotMatch(html, /href="javascript:/);
+  assert.match(html, /<details open>/);
+  assert.match(html, /<summary>More context<\/summary>/);
+  assert.doesNotMatch(html, /onclick=/);
+  assert.doesNotMatch(html, /class="ignored"/);
   assert.match(html, /<pre><code class="language-js">/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
@@ -1062,7 +1128,10 @@ test("review command defaults to the cumulative session workspace and reuses a c
   assert.match(source, /openSessionReview\(ctx\)/);
   assert.match(source, /mergeSessionReviewFiles\(/);
   assert.match(source, /cmux", \["--json", "new-window"\]/);
-  assert.match(source, /browser", "--surface", reviewSurfaceId, "navigate"/);
+  assert.match(source, /window\.location\.replace/);
+  assert.match(source, /"browser", "--surface", surfaceId, "eval", "--script", script/);
+  assert.match(source, /"browser", "--surface", surfaceId, "navigate", url/);
+  assert.match(source, /if \(replaced\.code === 0\) return replaced;\s*return pi\.exec\("cmux", \["browser", "--surface", surfaceId, "navigate", url\]\);/);
   assert.match(source, /recentFiles:/);
   assert.match(source, /buildSessionReviewTargets: buildSessionTargetList/);
   assert.match(source, /filterReviewableSessionFileRecords/);
@@ -1133,13 +1202,25 @@ test("loopback review service saves markdown atomically and keeps draft text tra
   assert.match(pageHtml, /if\(!selection\|\|selection\.rangeCount!==1\|\|selection\.isCollapsed\)\{return null\}/);
   assert.match(pageHtml, /wireInlineAnnotations/);
   assert.match(pageHtml, /id="reload-file"/);
+  assert.match(pageHtml, /id="toast"/);
+  assert.match(pageHtml, /role="status"/);
+  assert.match(pageHtml, /function showToast/);
+  assert.match(pageHtml, /Inserted review comments into Pi/);
+  assert.match(pageHtml, /Inserted .*diff comment/);
   assert.match(pageHtml, /file-state/);
   assert.match(pageHtml, /reviewSubmittedContent/);
   assert.match(pageHtml, /Updated after review/);
+  assert.match(pageHtml, /await setPreview\(true\);setStatus\("Saved to disk"\)/);
   assert.match(pageHtml, /id="refresh-state"/);
   assert.match(pageHtml, /Last refreshed/);
   assert.match(pageHtml, /touchRefreshStatus/);
   assert.doesNotMatch(pageHtml, /if\(document\.hidden\|\|checkingFileState\)return/);
+  assert.match(pageHtml, /setInterval\(checkWorkspaceNavigation,2000\)/);
+  assert.doesNotMatch(pageHtml, /if\(document\.hidden\|\|!reviewSidebar\)return/);
+  assert.match(pageHtml, /function windowScrollRatio/);
+  assert.match(pageHtml, /function editorScrollRatio/);
+  assert.match(pageHtml, /restoreWindowScrollRatio\(scrollRatio\)/);
+  assert.match(pageHtml, /restoreEditorScrollRatio\(scrollRatio\)/);
   assert.match(pageHtml, /Save failed:/);
   assert.match(pageHtml, /openInlineEditorAt/);
   assert.match(pageHtml, /draft-batch/);
@@ -1426,6 +1507,7 @@ test("loopback review service stages editable annotations and appends one batch 
   const staged = await stagedResponse.json();
   assert.match(staged.content, /First claim \[an: Add evidence\.\]/);
   assert.equal(staged.annotations[0].context, "First claim");
+  assert.equal(staged.annotations[0].highlight, "First claim");
 
   const editedResponse = await post("annotation-update", {
     content: staged.content,
@@ -1443,6 +1525,7 @@ test("loopback review service stages editable annotations and appends one batch 
   assert.equal(drafts.length, 1);
   assert.match(drafts[0], /Markdown review batch/);
   assert.match(drafts[0], /Cite the benchmark/);
+  assert.match(drafts[0], /Highlighted: First claim/);
   assert.equal(await readFile(markdownPath, "utf8"), source);
 
   const before = await stat(markdownPath);
@@ -1524,8 +1607,10 @@ test("session Markdown review batches survive file switches across documents", a
   assert.match(drafts[0], /Markdown review batch \(2 inline comments across 2 files\):/);
   assert.match(drafts[0], /File: .*first\.md/);
   assert.match(drafts[0], /Line 1: Clarify first\./);
+  assert.match(drafts[0], /Highlighted: First claim/);
   assert.match(drafts[0], /File: .*second\.md/);
   assert.match(drafts[0], /Line 1: Clarify second\./);
+  assert.match(drafts[0], /Highlighted: Second claim/);
   assert.equal(await readFile(firstPath, "utf8"), "First claim.\n");
   assert.equal(await readFile(secondPath, "utf8"), "Second claim.\n");
 

@@ -84,6 +84,8 @@ async function run() {
       "The fourth passage contains delta for the final comment.",
       "",
       "`nccl_test.mfu` is a DogStatsD workload signal. When its 30-second value range exceeds `range_epsilon`, lookback forwards retained GPU context. The monitor metric is admitted automatically; it does not need to appear under `dogstatsd.metric_names`.",
+      "",
+      ...Array.from({ length: 80 }, (_, index) => `Scroll preservation filler line ${index + 1}.`),
       ""
     ].join("\n"),
     "utf8"
@@ -308,6 +310,34 @@ async function run() {
       await cdp.send("Input.insertText", { text: value });
     };
 
+    await evaluate("window.scrollTo(0, document.documentElement.scrollHeight / 2)");
+    await delay(80);
+    await click("#toggle");
+    await waitFor(
+      () => evaluate(`(() => {
+        const editor = document.querySelector("#editor");
+        return !editor.classList.contains("hidden") && editor.scrollTop > 0;
+      })()`),
+      "Switching to source edit mode did not preserve scroll"
+    );
+    await evaluate(`(() => {
+      const editor = document.querySelector("#editor");
+      editor.scrollTop = editor.scrollHeight;
+    })()`);
+    await click("#toggle");
+    await waitFor(
+      () => evaluate(`(() => {
+        const editor = document.querySelector("#editor");
+        const preview = document.querySelector("#preview");
+        return editor.classList.contains("hidden") &&
+          !preview.classList.contains("hidden") &&
+          window.scrollY > 0;
+      })()`),
+      "Switching back to rendered preview did not preserve scroll"
+    );
+    await evaluate("window.scrollTo(0, 0)");
+    await delay(80);
+
     await selectWord("alpha");
     await click("#selection-action");
     await waitFor(
@@ -426,9 +456,17 @@ async function run() {
           commentNodes.length !== annotations.length ||
           commentNodes.some((node) => getComputedStyle(node).textAlign !== "left")
         ) return null;
+        const highlights = [...document.querySelectorAll(".annotation-highlight")]
+          .map((node) => node.textContent);
+        if (
+          highlights.length !== annotations.length ||
+          !highlights.some((value) => value.includes("Highlighted:") && value.includes("alpha")) ||
+          !highlights.some((value) => value.includes("Highlighted:") && value.includes("nccl_test.mfu"))
+        ) return null;
         return {
           annotationCount: annotations.length,
           commentTextAlign: getComputedStyle(commentNodes[0]).textAlign,
+          highlights,
           comments,
           source: document.querySelector("#editor").value
         };
@@ -450,12 +488,18 @@ async function run() {
       () => evaluate("document.querySelector('#status').textContent === 'Waiting for file changes'"),
       "Submitted review did not enter waiting state"
     );
+    await waitFor(
+      () => evaluate("document.querySelector('#toast').textContent.includes('Inserted review comments into Pi') && !document.querySelector('#toast').classList.contains('hidden')"),
+      "Submitted review did not show an insertion toast"
+    );
     if (
       drafts.length !== 1 ||
       !/^1\. Line \d+: First review comment$/m.test(drafts[0]) ||
-      !/^6\. Line \d+: Wrapped inline-code review comment$/m.test(drafts[0])
+      !/^6\. Line \d+: Wrapped inline-code review comment$/m.test(drafts[0]) ||
+      !/^   Highlighted: .*alpha/m.test(drafts[0]) ||
+      !/^   Highlighted: .*nccl_test\.mfu/m.test(drafts[0])
     ) {
-      throw new Error("Submitted review batch omitted Markdown source line numbers");
+      throw new Error("Submitted review batch omitted Markdown source line numbers or highlights");
     }
     const revisedSource = "# Revised after review\n\nAll submitted comments were addressed.\n";
     await writeFile(markdownPath, revisedSource, "utf8");
@@ -471,7 +515,44 @@ async function run() {
       })()`),
       "Submitted review did not reload after the file changed"
     );
-    process.stdout.write(`${JSON.stringify({ ...result, draft: drafts[0], refreshed })}\n`);
+    await click("#toggle");
+    const savedSource = "# Saved from edit mode\\n\\nRendered preview should return after save.\\n";
+    await evaluate(`(() => {
+      const editor = document.querySelector("#editor");
+      editor.value = ${JSON.stringify(savedSource)};
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await waitFor(
+      () => evaluate("!document.querySelector('#save').disabled"),
+      "Save did not become available after editing source"
+    );
+    await click("#save");
+    const saved = await waitFor(
+      () => evaluate(`(() => {
+        const editor = document.querySelector("#editor");
+        const preview = document.querySelector("#preview");
+        const status = document.querySelector("#status").textContent;
+        const source = editor.value;
+        if (
+          source !== ${JSON.stringify(savedSource)} ||
+          status !== "Saved to disk" ||
+          preview.classList.contains("hidden") ||
+          !editor.classList.contains("hidden") ||
+          !preview.textContent.includes("Rendered preview should return after save.")
+        ) return null;
+        return {
+          source,
+          status,
+          previewVisible: !preview.classList.contains("hidden")
+        };
+      })()`),
+      "Save did not return to rendered preview"
+    );
+    const diskContent = await readFile(markdownPath, "utf8");
+    if (diskContent !== savedSource) {
+      throw new Error("Save did not write edited Markdown to disk");
+    }
+    process.stdout.write(`${JSON.stringify({ ...result, draft: drafts[0], refreshed, saved })}\n`);
   } finally {
     cdp?.close();
     chrome.kill("SIGTERM");

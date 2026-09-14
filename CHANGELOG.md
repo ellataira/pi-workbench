@@ -3,6 +3,11 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-11
+
+- Improved `/review` navigation, Markdown preview/editing, and comment context
+  while preserving bounded file discovery and raw-HTML safety.
+
 ## 2026-08-31
 
 - Made Markdown review comments session-level across the review workspace, so
@@ -13,6 +18,24 @@ and current; the quickstart holds complete usage details.
 - Kept open `/review` localhost pages watching for safe disk refreshes even
   when the review window is backgrounded, and added a visible last-refreshed
   timestamp.
+- Kept open `/review` localhost sidebars refreshing after later agent turns, so
+  new session/relevant files appear without reopening the review popout.
+- Expanded `/review` relevant-file discovery from a tiny three-file automatic
+  set to a bounded task-sized set while retaining generated, vendored,
+  lockfile, and internal-artifact filters.
+- Made successful Markdown **Save** return the review panel to rendered preview
+  so the saved document can be verified visually immediately.
+- Added a visible review-panel toast after comments or selections are inserted
+  into Pi.
+- Allowed Markdown-authored `<details>` and `<summary>` blocks to render in the
+  review preview while continuing to escape other raw HTML and unsafe
+  attributes.
+- Preserved approximate scroll position when toggling `/review` Markdown files
+  between rendered preview and source editing.
+- Showed the highlighted Markdown excerpt for each inline review comment in
+  both the review tray and the batch text inserted into Pi.
+- Reused the existing `/review` browser surface with an in-page URL replacement
+  so refresh/reopen updates the current tab instead of adding another tab.
 - Improved background-run visibility and immediate `/copy` clipboard behavior
   while preserving prompt and transcript privacy.
 

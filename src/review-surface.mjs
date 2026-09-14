@@ -125,6 +125,19 @@ function normalizedAnnotationComment(value) {
   return normalizedSingleLine(value, MAX_COMMENT_CHARS).replace(/\]/g, ")");
 }
 
+function normalizedAnnotationHighlight(value) {
+  return normalizedSingleLine(value, 500);
+}
+
+function normalizedAnnotationExcerpt(value, maxLength = 1_000) {
+  return normalizedSingleLine(
+    String(value ?? "")
+      .replace(/[ \t]?\[an:\s*[^\]\r\n]*\]/gi, " ")
+      .replace(/\s+([,.;:!?])/g, "$1"),
+    maxLength
+  );
+}
+
 export function classifyReviewFile(filePath) {
   const extension = path.extname(String(filePath ?? "")).toLowerCase();
   if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
@@ -166,15 +179,17 @@ export function parseMarkdownAnnotations(source) {
     }
     scannedUntil = match.index;
     const lineStart = content.lastIndexOf("\n", match.index - 1) + 1;
-    const context = content
+    const context = normalizedAnnotationExcerpt(content
       .slice(lineStart, match.index)
       .trim()
-      .slice(-1_000);
+      .slice(-1_000));
+    const highlight = normalizedAnnotationHighlight(context);
     annotations.push({
       index: annotations.length,
       start: match.index,
       end: pattern.lastIndex,
       comment: normalizedAnnotationComment(match[2]),
+      highlight,
       context,
       lineNumber
     });
@@ -231,13 +246,15 @@ export function formatAnnotationBatchDraft({
   usable.forEach((annotation, index) => {
     const comment = normalizedAnnotationComment(annotation?.comment);
     if (!comment) return;
-    const context = normalizedSingleLine(annotation?.context, 1_000);
+    const context = normalizedAnnotationExcerpt(annotation?.context, 1_000);
+    const highlight = normalizedAnnotationHighlight(annotation?.highlight ?? context);
     const lineNumber = Number(annotation?.lineNumber);
     const location =
       Number.isInteger(lineNumber) && lineNumber > 0
         ? `Line ${lineNumber}: `
         : "";
     lines.push(`${index + 1}. ${location}${comment}`);
+    if (highlight) lines.push(`   Highlighted: ${highlight}`);
     if (context) lines.push(`   Context: ${context}`);
   });
   return lines.join("\n").slice(0, MAX_BATCH_DRAFT_CHARS);
@@ -279,13 +296,15 @@ export function formatMultiFileAnnotationBatchDraft({ documents }) {
     lines.push(`File: ${document.sourcePath || "review document"}`);
     for (const annotation of document.annotations) {
       const comment = normalizedAnnotationComment(annotation?.comment);
-      const context = normalizedSingleLine(annotation?.context, 1_000);
+      const context = normalizedAnnotationExcerpt(annotation?.context, 1_000);
+      const highlight = normalizedAnnotationHighlight(annotation?.highlight ?? context);
       const lineNumber = Number(annotation?.lineNumber);
       const location =
         Number.isInteger(lineNumber) && lineNumber > 0
           ? `Line ${lineNumber}: `
           : "";
       lines.push(`${index}. ${location}${comment}`);
+      if (highlight) lines.push(`   Highlighted: ${highlight}`);
       if (context) lines.push(`   Context: ${context}`);
       index += 1;
       if (index > MAX_BATCH_COMMENTS) break;
@@ -721,6 +740,26 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function renderSafeReviewHtml(value) {
+  const source = String(value ?? "");
+  let rendered = "";
+  let offset = 0;
+  for (const match of source.matchAll(/<\/?(?:details|summary)\b[^>]*>/gi)) {
+    rendered += escapeHtml(source.slice(offset, match.index));
+    const tag = match[0];
+    if (/^<\/details\s*>$/i.test(tag)) rendered += "</details>";
+    else if (/^<\/summary\s*>$/i.test(tag)) rendered += "</summary>";
+    else if (/^<summary\b/i.test(tag)) rendered += "<summary>";
+    else if (/^<details\b/i.test(tag)) rendered += /\sopen(?:\s|=|>|$)/i.test(tag)
+      ? "<details open>"
+      : "<details>";
+    else rendered += escapeHtml(tag);
+    offset = match.index + tag.length;
+  }
+  rendered += escapeHtml(source.slice(offset));
+  return rendered;
+}
+
 function safeMarkdownUrl(value, { image = false, assetBase = "" } = {}) {
   const href = String(value ?? "").trim();
   if (!href || /[\u0000-\u001f\u007f]/.test(href)) return "";
@@ -740,7 +779,7 @@ export async function renderMarkdownForReview(markdown, {
 } = {}) {
   const renderer = {
     html(token) {
-      return escapeHtml(token.text);
+      return renderSafeReviewHtml(token.text);
     },
     link(token) {
       const href = safeMarkdownUrl(token.href);
@@ -846,11 +885,12 @@ header{position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;p
 button{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:6px;padding:6px 10px;cursor:pointer}button.primary{background:var(--accent);color:white;border-color:transparent}button:disabled{opacity:.45}
 main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14px,2.5vw,36px)}.comment-box{width:100%;min-height:64px;margin-bottom:12px;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--text)}
 #annotations{margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--card);overflow:hidden}#annotations summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;font-weight:650;list-style:none}#annotations summary::-webkit-details-marker{display:none}#annotations summary::before{content:"›";color:var(--muted);font-size:18px;transition:transform .15s}#annotations[open] summary::before{transform:rotate(90deg)}#annotation-list{padding:0 12px 10px}.count{padding:1px 7px;border-radius:999px;background:var(--accent);color:white;font-size:11px}.summary-hint{margin-left:auto;color:var(--muted);font-size:12px;font-weight:400}.empty{color:var(--muted);font-size:12px;padding:4px 0}
-.annotation-card{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,2fr) auto;gap:8px;align-items:start;padding:9px 0;border-top:1px solid var(--border)}.annotation-card:first-child{border-top:0}.annotation-context{color:var(--muted);font-size:12px;overflow-wrap:anywhere}.annotation-edit{width:100%;min-height:54px;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical}.annotation-actions{display:flex;gap:5px}
+.annotation-card{display:grid;grid-template-columns:minmax(120px,1fr) minmax(220px,2fr) auto;gap:8px;align-items:start;padding:9px 0;border-top:1px solid var(--border)}.annotation-card:first-child{border-top:0}.annotation-location{display:grid;gap:3px}.annotation-highlight{font-size:12px;color:var(--text);overflow-wrap:anywhere}.annotation-highlight span{color:var(--annotation-text);font-weight:650}.annotation-context{color:var(--muted);font-size:12px;overflow-wrap:anywhere}.annotation-edit{width:100%;min-height:54px;padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);resize:vertical}.annotation-actions{display:flex;gap:5px}
 #editor{width:100%;min-height:70vh;resize:vertical;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}
 #preview{padding:34px 42px;border:1px solid var(--border);border-radius:9px;background:var(--card);min-height:70vh;line-height:1.65;overflow-wrap:anywhere}#preview>*:first-child{margin-top:0}#preview>*:last-child{margin-bottom:0}#preview h1,#preview h2,#preview h3{line-height:1.25;margin:1.5em 0 .6em}#preview h1,#preview h2{padding-bottom:.28em;border-bottom:1px solid var(--border)}#preview p,#preview ul,#preview ol,#preview blockquote,#preview table,#preview pre{margin:0 0 1em}#preview ul,#preview ol{padding-left:1.7em}#preview li+li{margin-top:.25em}#preview blockquote{margin-left:0;padding:.15em 1em;border-left:4px solid var(--accent);color:var(--muted);background:color-mix(in srgb,var(--accent) 5%,transparent)}#preview table{display:block;width:max-content;max-width:100%;overflow:auto;border-collapse:collapse}#preview th,#preview td{padding:7px 10px;border:1px solid var(--border)}#preview th{background:var(--bg);font-weight:650}#preview pre{overflow:auto;padding:13px 15px;border-radius:7px;background:var(--bg)}#preview code{padding:.12em .32em;border-radius:4px;background:var(--bg);font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}#preview pre code{padding:0;background:transparent}#preview img{display:block;max-width:100%;height:auto;margin:1em auto;border-radius:6px}#preview hr{margin:2em 0;border:0;border-top:1px solid var(--border)}#preview input[type=checkbox]{margin-right:.45em;accent-color:var(--accent)}#preview a{color:var(--accent);text-underline-offset:2px}.unsafe-link{color:var(--muted);text-decoration:line-through}.annotation{display:inline-flex;gap:5px;align-items:flex-start;justify-content:flex-start;max-width:min(100%,560px);text-align:left;margin:0 3px;padding:1px 6px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;vertical-align:baseline;user-select:none}.annotation:hover,.annotation:focus{outline:2px solid var(--annotation-border);outline-offset:1px}.annotation-label{flex:0 0 auto;color:var(--annotation-border);font-size:9px;font-weight:750;text-transform:uppercase;letter-spacing:.04em}.annotation-comment{display:block;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left}
 #inline-editor{position:fixed;z-index:20;width:min(420px,calc(100vw - 24px));padding:12px;border:1px solid var(--annotation-border);border-radius:9px;background:var(--annotation-bg);box-shadow:0 12px 38px rgb(0 0 0/.24)}#inline-editor strong{display:block;margin-bottom:7px;color:var(--annotation-text)}.inline-editor-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;margin-top:8px}#inline-comment-edit{width:100%;min-height:76px;padding:8px;border:1px solid var(--annotation-border);border-radius:6px;background:var(--card);color:var(--text);resize:vertical}
 #selection-action{position:fixed;z-index:18;padding:6px 10px;border:0;border-radius:999px;background:var(--accent);color:white;box-shadow:0 6px 20px rgb(0 0 0/.22);font-weight:650}
+#toast{position:fixed;right:18px;bottom:18px;z-index:30;max-width:min(420px,calc(100vw - 36px));padding:11px 14px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--card) 92%,var(--accent));color:var(--text);box-shadow:0 14px 38px rgb(0 0 0/.24);font-size:13px;font-weight:600;transition:opacity .18s,transform .18s}#toast.hidden{display:block!important;opacity:0;transform:translateY(10px);pointer-events:none}
 #diff{border:1px solid var(--border);border-radius:8px;overflow:auto;background:var(--card);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.diff-row{display:grid;grid-template-columns:58px 58px 1fr;white-space:pre;min-width:max-content}.diff-row>span{padding:0 8px}.diff-row .ln{color:var(--muted);text-align:right;border-right:1px solid var(--border);user-select:none}.diff-row.add{background:var(--add)}.diff-row.del{background:var(--del)}.diff-row.meta{color:var(--muted);font-weight:600}.diff-row.selected{outline:2px solid var(--annotation-border);outline-offset:-2px}.inline-comment{display:block;width:calc(100% - 146px);text-align:left;padding:6px 10px;margin:4px 10px 8px 126px;border:0;border-left:3px solid var(--annotation-border);border-radius:3px;background:var(--annotation-bg);color:var(--annotation-text);white-space:normal;font:500 12px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}.inline-comment:hover,.inline-comment:focus{outline:2px solid var(--annotation-border);outline-offset:1px}
 .status{color:var(--muted);font-size:12px}.refresh-state{white-space:nowrap}.dirty{padding:2px 7px;border-radius:999px;background:var(--bg)}.dirty.unsaved{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.hidden{display:none!important}
 .review-shell{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);width:100%;align-items:start}.review-sidebar{position:sticky;top:51px;height:calc(100vh - 51px);overflow:auto;padding:14px 10px;border-right:1px solid var(--border);background:var(--card)}.review-sidebar strong{display:block;padding:10px 9px 5px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.review-sidebar strong:first-child{padding-top:3px}.review-sidebar a{display:block;margin:2px 0;padding:8px 9px;border-radius:7px;color:var(--text);text-decoration:none;font-size:12px;overflow-wrap:anywhere}.review-sidebar a.mode{border:1px solid var(--border);margin-bottom:5px}.review-sidebar a .nav-name{display:block;font-weight:650}.review-sidebar a small{display:block;margin-top:2px;color:var(--muted);font-size:10.5px;font-weight:400}.review-sidebar a:hover{background:var(--bg)}.review-sidebar a.active{background:color-mix(in srgb,var(--accent) 14%,var(--card));color:var(--accent);font-weight:650}.review-sidebar a.active small{color:inherit;opacity:.78}.nav-group{margin-top:7px;border-top:1px solid var(--border)}.nav-group summary{padding:10px 9px 6px;color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;cursor:pointer}.nav-group summary:hover{color:var(--text)}
@@ -873,6 +913,7 @@ main{min-width:0;width:100%;max-width:1480px;margin:18px auto;padding:0 clamp(14
   <button id="save" class="${state.kind === "markdown" ? "" : "hidden"}">Save</button>
   <button id="send" class="primary">Add to Pi</button>
 </header>
+<div id="toast" class="hidden" role="status" aria-live="polite"></div>
 <div class="review-shell">
 ${state.navigation?.length > 1 ? `<nav id="review-sidebar" class="review-sidebar" aria-label="Session review files">${navigationHtml}</nav>` : ""}
 <main>
@@ -919,6 +960,7 @@ const inlineCommentEdit=document.getElementById("inline-comment-edit");
 const reloadFileButton=document.getElementById("reload-file");
 const dirtyState=document.getElementById("dirty-state");
 const selectionAction=document.getElementById("selection-action");
+const toast=document.getElementById("toast");
 let activeInlineAnnotation=-1;
 let activeDiffCommentId="";
 editor.value=state.content;
@@ -934,7 +976,15 @@ let commentMode=false;
 let addingAnnotation=false;
 let reviewSubmittedContent=null;
 let checkingFileState=false;
+let toastTimer;
 const setStatus=(text)=>{statusEl.textContent=text;};
+function showToast(text){
+  if(!toast)return;
+  toast.textContent=text;
+  toast.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>toast.classList.add("hidden"),4200);
+}
 function formatRefreshTime(){
   return new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
@@ -984,7 +1034,7 @@ function renderWorkspaceNavigation(navigation){
   let group="",container=reviewSidebar;for(const item of navigation){const nextGroup=item.group||"Session files";if(nextGroup!==group){group=nextGroup;if(group.startsWith("Older this session")||group.startsWith("Earlier this session")){const details=document.createElement("details");details.className="nav-group";details.open=navigation.some((candidate)=>candidate.current&&(candidate.group||"Session files")===group);const summary=document.createElement("summary");summary.textContent=group;details.appendChild(summary);reviewSidebar.appendChild(details);container=details}else{const heading=document.createElement("strong");heading.textContent=group;reviewSidebar.appendChild(heading);container=reviewSidebar}}const link=document.createElement("a");link.href=item.url;link.title=item.label;if(item.current)link.classList.add("active");if(nextGroup==="Review modes")link.classList.add("mode");const separator=item.label.indexOf(" — ");if(separator>=0){const name=document.createElement("span");name.className="nav-name";name.textContent=item.label.slice(0,separator);const detail=document.createElement("small");detail.textContent=item.label.slice(separator+3);link.append(name,detail)}else{link.textContent=item.label}container.appendChild(link)}
 }
 async function checkWorkspaceNavigation(){
-  if(document.hidden||!reviewSidebar)return;
+  if(!reviewSidebar)return;
   try{const result=await api("navigation");renderWorkspaceNavigation(result.navigation)}catch{}
 }
 const refreshPreview=async()=>{
@@ -995,7 +1045,24 @@ const refreshPreview=async()=>{
   wireInlineAnnotations();
   setStatus(annotations.length?annotations.length+" review comment"+(annotations.length===1?"":"s"):"Select rendered text to comment");
 };
+function windowScrollRatio(){
+  const max=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+  return max?window.scrollY/max:0;
+}
+function editorScrollRatio(){
+  const max=Math.max(0,editor.scrollHeight-editor.clientHeight);
+  return max?editor.scrollTop/max:0;
+}
+function restoreWindowScrollRatio(ratio){
+  const max=Math.max(0,document.documentElement.scrollHeight-window.innerHeight);
+  window.scrollTo(0,Math.max(0,Math.min(1,ratio))*max);
+}
+function restoreEditorScrollRatio(ratio){
+  const max=Math.max(0,editor.scrollHeight-editor.clientHeight);
+  editor.scrollTop=Math.max(0,Math.min(1,ratio))*max;
+}
 const setPreview=async(next)=>{
+  const scrollRatio=showingPreview?windowScrollRatio():editorScrollRatio();
   showingPreview=next;
   if(!next)commentMode=false;
   closeInlineEditor();clearRenderedSelection();
@@ -1003,6 +1070,7 @@ const setPreview=async(next)=>{
   preview.classList.toggle("hidden",!showingPreview);
   document.getElementById("toggle").textContent=showingPreview?"Edit source":"Preview";
   if(showingPreview)await refreshPreview();
+  if(showingPreview)restoreWindowScrollRatio(scrollRatio);else restoreEditorScrollRatio(scrollRatio);
 };
 function captureRenderedSelection(){
   if(!showingPreview)return null;
@@ -1161,7 +1229,12 @@ function renderAnnotationTray(){
   }
   annotations.forEach((annotation,index)=>{
     const card=document.createElement("div");card.className="annotation-card";
-    const context=document.createElement("div");context.className="annotation-context";context.textContent=annotation.context||"Inline location "+(index+1);
+    const location=document.createElement("div");location.className="annotation-location";
+    const highlight=document.createElement("div");highlight.className="annotation-highlight";
+    const highlightLabel=document.createElement("span");highlightLabel.textContent="Highlighted:";
+    highlight.append(highlightLabel," "+(annotation.highlight||annotation.context||"Inline location "+(index+1)));
+    const context=document.createElement("div");context.className="annotation-context";context.textContent=annotation.context&&annotation.context!==annotation.highlight?"Context: "+annotation.context:"";
+    location.append(highlight,context);
     const input=document.createElement("textarea");input.className="annotation-edit";input.value=annotation.comment;input.placeholder="Write this inline comment…";
     const actions=document.createElement("div");actions.className="annotation-actions";
     const update=document.createElement("button");update.textContent="Update";update.onclick=async()=>{
@@ -1172,7 +1245,7 @@ function renderAnnotationTray(){
     };
     input.addEventListener("keydown",(event)=>{if((event.metaKey||event.ctrlKey)&&event.key==="Enter"){event.preventDefault();update.click()}});
     const locate=document.createElement("button");locate.textContent="Locate";locate.onclick=async()=>{await setPreview(true);openInlineEditorAt(index)};
-    actions.append(locate,update,remove);card.append(context,input,actions);annotationList.appendChild(card);
+    actions.append(locate,update,remove);card.append(location,input,actions);annotationList.appendChild(card);
   });
 }
 editor.addEventListener("input",()=>{
@@ -1196,7 +1269,7 @@ document.getElementById("save").onclick=async()=>{
   try{
     setStatus("Saving…");
     const result=await api("save",{content:editor.value,expectedMtimeMs:state.mtimeMs});
-    state.mtimeMs=result.mtimeMs;savedContent=editor.value;reviewSubmittedContent=null;renderAnnotationTray();reloadFileButton.classList.add("hidden");setStatus("Saved to disk");
+    state.mtimeMs=result.mtimeMs;savedContent=editor.value;reviewSubmittedContent=null;renderAnnotationTray();reloadFileButton.classList.add("hidden");touchRefreshStatus();await setPreview(true);setStatus("Saved to disk");
   }catch(error){
     if(error.status===409)reloadFileButton.classList.remove("hidden");
     setStatus("Save failed: "+error.message);
@@ -1282,11 +1355,11 @@ document.getElementById("diff-comment").onclick=async()=>{
 document.getElementById("send").onclick=async()=>{
   if(state.kind==="markdown"&&annotations.some((annotation)=>!annotation.comment.trim())){setStatus("Finish or remove every unfinished inline comment first");return}
   if(state.kind==="markdown"&&annotations.length){
-    try{await api("draft-batch",{content:editor.value});reviewSubmittedContent=editor.value;setStatus("Waiting for file changes")}catch(error){setStatus(error.message)}return;
+    try{await api("draft-batch",{content:editor.value});reviewSubmittedContent=editor.value;setStatus("Waiting for file changes");showToast("Inserted review comments into Pi. Waiting for file changes…")}catch(error){setStatus(error.message)}return;
   }
   if(state.kind==="diff"){
     if(!state.comments.length){setStatus("Add at least one inline diff comment first");return}
-    try{await api("draft-comments");setStatus("Added "+state.comments.length+" diff comment"+(state.comments.length===1?"":"s")+" to Pi")}catch(error){setStatus(error.message)}return;
+    try{await api("draft-comments");setStatus("Added "+state.comments.length+" diff comment"+(state.comments.length===1?"":"s")+" to Pi");showToast("Inserted "+state.comments.length+" diff comment"+(state.comments.length===1?"":"s")+" into Pi.")}catch(error){setStatus(error.message)}return;
   }
   let selection="",location={};
   if(state.kind==="diff"){
@@ -1295,7 +1368,7 @@ document.getElementById("send").onclick=async()=>{
   }else selection=editor.value.slice(editor.selectionStart,editor.selectionEnd);
   if(!selection&&window.getSelection)selection=String(window.getSelection());
   if(!selection&&!comment.value.trim()){setStatus("Select text or write a comment first");return}
-  await api("draft",{selection,comment:comment.value,...location});setStatus("Added to Pi draft");
+  await api("draft",{selection,comment:comment.value,...location});setStatus("Added to Pi draft");showToast("Inserted selection into Pi.");
 };
 document.addEventListener("keydown",(event)=>{
   if(state.kind!=="markdown")return;

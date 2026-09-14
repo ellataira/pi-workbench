@@ -19,6 +19,8 @@ import { importFreshSourceModule } from "../src/fresh-module.mjs";
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 const MAX_DIFF_BYTES = 5 * 1024 * 1024;
+const MAX_REVIEW_SHORTLIST_FILES = 24;
+const MAX_AUTOMATIC_REVIEW_FILES = 12;
 const REVIEW_RECOVERY_STATE = Symbol.for("pi.review.recovery-state.v1");
 const reviewRecoveryStates: Map<string, any> =
 	((globalThis as any)[REVIEW_RECOVERY_STATE] ??= new Map());
@@ -182,9 +184,16 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		}
 	}
 
+	async function replaceReviewSurfaceUrl(surfaceId: string, url: string) {
+		const script = `window.location.replace(${JSON.stringify(url)})`;
+		const replaced = await pi.exec("cmux", ["browser", "--surface", surfaceId, "eval", "--script", script]);
+		if (replaced.code === 0) return replaced;
+		return pi.exec("cmux", ["browser", "--surface", surfaceId, "navigate", url]);
+	}
+
 	async function openReviewUrl(url: string) {
 		if (reviewSurfaceId) {
-			const reused = await pi.exec("cmux", ["browser", "--surface", reviewSurfaceId, "navigate", url]);
+			const reused = await replaceReviewSurfaceUrl(reviewSurfaceId, url);
 			if (reused.code === 0 && await reviewSurfaceShows(reviewSurfaceId, url)) {
 				if (reviewWindowId) await pi.exec("cmux", ["focus-window", "--window", reviewWindowId]);
 				await pi.exec("cmux", ["browser", "--surface", reviewSurfaceId, "focus-webview"]);
@@ -410,12 +419,12 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		if (!status.currentFiles.length) {
 			throw new Error("No supplied paths are reviewable local files");
 		}
-		const reviewable = status.currentFiles.slice(0, 8);
+		const reviewable = status.currentFiles.slice(0, MAX_REVIEW_SHORTLIST_FILES);
 		const next = updateReviewShortlist(
 			reviewShortlist,
 			reviewable.map((filePath: string) => ({ filePath, reason, source })),
 			ctx.cwd,
-			{ allowedRoot: homedir(), limit: 8 },
+			{ allowedRoot: homedir(), limit: MAX_REVIEW_SHORTLIST_FILES },
 		);
 		await saveReviewShortlist(next, ctx);
 		return reviewable;
@@ -430,7 +439,9 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	}
 
 	async function rememberAutomaticReviewFiles(filePaths: string[], ctx: any) {
-		const candidates = automaticReviewShortlistCandidates(filePaths, ctx.cwd);
+		const candidates = automaticReviewShortlistCandidates(filePaths, ctx.cwd, {
+			limit: MAX_AUTOMATIC_REVIEW_FILES,
+		});
 		if (!candidates.length) return;
 		const fixed = reviewShortlist.filter((item) => item.source !== "automatic");
 		const automatic = updateReviewShortlist(
@@ -441,11 +452,11 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 				source: "automatic",
 			})),
 			ctx.cwd,
-			{ allowedRoot: homedir(), limit: Math.max(1, 8 - fixed.length) },
+			{ allowedRoot: homedir(), limit: Math.max(1, MAX_REVIEW_SHORTLIST_FILES - fixed.length) },
 		);
 		const next = updateReviewShortlist([], [...fixed, ...automatic], ctx.cwd, {
 			allowedRoot: homedir(),
-			limit: 8,
+			limit: MAX_REVIEW_SHORTLIST_FILES,
 		});
 		await saveReviewShortlist(next, ctx);
 	}
@@ -774,7 +785,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 		reviewShortlist = restoreReviewShortlist(
 			ctx.sessionManager.getBranch(),
 			ctx.cwd,
-			{ limit: 8, allowedRoot: homedir() },
+			{ limit: MAX_REVIEW_SHORTLIST_FILES, allowedRoot: homedir() },
 		);
 		sessionChangedFiles = restoreReviewFileCandidates(
 			ctx.sessionManager.getBranch(),
@@ -883,7 +894,7 @@ export default async function reviewSurfaceExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: `${event.systemPrompt}\n\nREVIEW RELEVANCE\nWhen a task has a small set of files the user will likely want to inspect, call review_open with mode=pin once and 1-8 paths. Pin primary implementation files, task plans, and user-facing artifacts. Do not pin lockfiles, generated output, vendored files, or incidental fixtures.`,
+		systemPrompt: `${event.systemPrompt}\n\nREVIEW RELEVANCE\nWhen a task has a small set of files the user will likely want to inspect, call review_open with mode=pin once and 1-${MAX_REVIEW_SHORTLIST_FILES} paths. Pin primary implementation files, task plans, and user-facing artifacts. Do not pin lockfiles, generated output, vendored files, or incidental fixtures.`,
 	}));
 
 	pi.on("tool_execution_start", async (event, ctx) => {
