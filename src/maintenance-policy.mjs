@@ -1,5 +1,6 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TIME_ZONE = "America/New_York";
+const DEFAULT_REPROMPT_AFTER_MS = DAY_MS;
 
 function zonedParts(now, timeZone) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -61,6 +62,7 @@ export function localDateKey(now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
 export function distillationTarget(now = new Date(), state = {}, options = {}) {
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
   const hour = Number(options.hour ?? 9);
+  const repromptAfterMs = Number(options.repromptAfterMs ?? DEFAULT_REPROMPT_AFTER_MS);
   const parts = zonedParts(now, timeZone);
   if (Number(parts.hour) < hour) return undefined;
   const latest = previousDate(`${parts.year}-${parts.month}-${parts.day}`);
@@ -69,7 +71,12 @@ export function distillationTarget(now = new Date(), state = {}, options = {}) {
   const target = /^\d{4}-\d{2}-\d{2}$/.test(completed)
     ? nextDate(completed)
     : latest;
-  if (state.lastPromptedFor === target) return undefined;
+  if (state.lastPromptedFor === target) {
+    const lastPromptedAt = Date.parse(state.lastPromptedAt ?? "");
+    if (Number.isFinite(lastPromptedAt) && now.getTime() - lastPromptedAt < repromptAfterMs) {
+      return undefined;
+    }
+  }
   return target;
 }
 

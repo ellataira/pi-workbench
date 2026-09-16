@@ -25,10 +25,10 @@ test("monthly audit inbox records fixed actionable metadata only", () => {
   assert.doesNotMatch(JSON.stringify(item), /prompt|response|transcript|message|output/i);
 });
 
-test("monthly launchd job runs on the first day at 10am", async () => {
+test("health audit launchd job runs twice monthly at 10am", async () => {
   const plist = await readFile(new URL("../launchd/com.ellataira.pi-monthly-health.plist", import.meta.url), "utf8");
-  assert.match(plist, new RegExp("<key>Day</key>\\s*<integer>1</integer>"));
-  assert.match(plist, new RegExp("<key>Hour</key>\\s*<integer>10</integer>"));
+  assert.match(plist, new RegExp("<key>Day</key>\\s*<integer>1</integer>[\\s\\S]*<key>Hour</key>\\s*<integer>10</integer>"));
+  assert.match(plist, new RegExp("<key>Day</key>\\s*<integer>15</integer>[\\s\\S]*<key>Hour</key>\\s*<integer>10</integer>"));
   assert.match(plist, /monthly-health-runner\.mjs/);
 });
 
@@ -39,7 +39,7 @@ test("monthly audit install and privacy contract are documented in both guides",
   ]);
   for (const guide of [readme, quickstart]) {
     assert.match(guide, /install:monthly-audit/);
-    assert.match(guide, /first day of each month/);
+    assert.match(guide, /1st and 15th|twice-monthly|twice monthly/);
     assert.match(guide, /no prompts|never stores prompts|contain no\s+prompts/i);
   }
 });

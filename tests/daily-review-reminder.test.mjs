@@ -35,6 +35,18 @@ test("9am reminder creates fixed metadata without session text", () => {
   assert.doesNotMatch(JSON.stringify(due), /prompt|transcript|content|message/i);
 });
 
+test("9am reminder reappears when yesterday's prompt was missed", () => {
+  const due = dailyReviewReminder(
+    new Date("2026-08-12T13:00:00.000Z"),
+    {
+      completedThrough: "2026-08-09",
+      lastPromptedFor: "2026-08-10",
+      lastPromptedAt: "2026-08-11T13:00:00.000Z"
+    }
+  );
+  assert.equal(due.id, "distillation:2026-08-10");
+});
+
 test("launchd runs the reminder every day at exactly 9am", async () => {
   const plist = await readFile(
     new URL(

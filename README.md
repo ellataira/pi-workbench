@@ -94,8 +94,8 @@ Local native sessions remain resumable for 30 days. Verified compressed notes
 can move to Drive-backed cold storage while their searchable metadata and Drive
 references remain local for automatic rehydration.
 
-The daily memory review runs at 9 AM New York time. The monthly health audit
-runs on the first day of each month and checks memory, review, pair-terminal,
+The daily memory review runs at 9 AM New York time. The twice-monthly health audit
+runs on the 1st and 15th and checks memory, review, pair-terminal,
 pet, MCP, and checkpoint behavior using aggregate metadata only. Audit records
 contain no prompts or transcripts.
 

@@ -20,6 +20,7 @@
     "install:daily-review": "./scripts/install-daily-review-reminder.sh",
     "install:monthly-audit": "./scripts/install-monthly-health-audit.sh",
     "install:pi-copy-picker": "node scripts/install-pi-copy-picker.mjs",
+    "install:pi-escape-interrupt": "node scripts/install-pi-escape-interrupt.mjs",
     "install:pi-prompt-echo": "node scripts/install-pi-prompt-echo.mjs",
     "install:pi-resume-clone": "node scripts/install-pi-resume-clone.mjs",
     "postinstall": "node scripts/harden-pi-subagents.mjs",

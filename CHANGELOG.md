@@ -3,13 +3,26 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-16
+
+- Added reliable Escape interruption after autocomplete closes during active Pi
+  work, with a guarded installer and no change to idle prompt editing.
+
 ## 2026-09-11
 
 - Improved `/review` navigation, Markdown preview/editing, and comment context
   while preserving bounded file discovery and raw-HTML safety.
+- Added a guarded Pi native patch so Escape still interrupts active work after
+  closing autocomplete, without changing idle prompt-editing behavior.
+- Fixed daily memory promotion reminders so a missed review date reappears
+  after 24 hours until it is completed.
+- Changed the privacy-safe Pi health audit from monthly to twice monthly on the
+  1st and 15th so maintenance regressions are caught sooner.
 
 ## 2026-08-31
 
+- Named `/resume` `Alt+Enter` cloned sessions and their cmux workspaces with a
+  clear `-clone` suffix derived from the selected session.
 - Made Markdown review comments session-level across the review workspace, so
   comments on multiple documents survive file switches and submit to Pi as one
   combined batch.

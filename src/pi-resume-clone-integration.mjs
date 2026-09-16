@@ -2,7 +2,8 @@ import path from "node:path";
 
 const KEYBINDING_MARKER = "pi-resume-clone-keybinding";
 const SELECTOR_MARKER = "pi-resume-clone";
-const CLONE_COMMAND = 'session="$PI_RESUME_CLONE_SESSION"; unset PI_RESUME_CLONE_SESSION; exec pi --fork "$session"';
+const CLONE_COMMAND = 'session="$PI_RESUME_CLONE_SESSION"; name="$PI_RESUME_CLONE_NAME"; unset PI_RESUME_CLONE_SESSION PI_RESUME_CLONE_NAME; exec pi --fork "$session" --name "$name"';
+const MAX_CLONE_NAME_CHARS = 80;
 
 function validAbsolutePath(value) {
   return typeof value === "string" &&
@@ -10,19 +11,44 @@ function validAbsolutePath(value) {
     !/[\u0000-\u001f\u007f]/.test(value);
 }
 
+function normalizedName(value) {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_CLONE_NAME_CHARS);
+}
+
+export function cloneSessionName(session) {
+  const fallback = validAbsolutePath(session?.path)
+    ? path.basename(session.path, path.extname(session.path))
+    : "session";
+  const base = normalizedName(
+    session?.name ??
+    session?.title ??
+    session?.displayName ??
+    session?.label ??
+    fallback
+  ) || "session";
+  return `${base}-clone`;
+}
+
 export function buildResumeCloneWorkspaceArgs(session) {
   if (!validAbsolutePath(session?.path)) {
     throw new Error("resume clone requires an absolute session path");
   }
   const cwd = validAbsolutePath(session?.cwd) ? session.cwd : process.cwd();
+  const name = cloneSessionName(session);
   return [
     "new-workspace",
     "--name",
-    "Forked Pi Session",
+    name,
     "--cwd",
     cwd,
     "--env",
     `PI_RESUME_CLONE_SESSION=${session.path}`,
+    "--env",
+    `PI_RESUME_CLONE_NAME=${name}`,
     "--command",
     CLONE_COMMAND,
     "--focus",
@@ -72,16 +98,24 @@ export function patchPiResumeCloneSelectorSource(value) {
 
   const helper = [
     `// ${SELECTOR_MARKER}: clone a saved session without replacing the active session.`,
+    "function cloneSessionName(session) {",
+    '    const fallback = typeof session?.path === "string" ? session.path.split("/").pop()?.replace(/\\.[^.]*$/, "") : "session";',
+    '    const raw = session?.name ?? session?.title ?? session?.displayName ?? session?.label ?? fallback ?? "session";',
+    '    const base = String(raw).replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, 80) || "session";',
+    '    return `${base}-clone`;',
+    "}",
     "function launchResumeClone(session) {",
     '    const sessionPath = typeof session?.path === "string" ? session.path : "";',
     '    const cwd = typeof session?.cwd === "string" && session.cwd.startsWith("/") ? session.cwd : process.cwd();',
+    "    const cloneName = cloneSessionName(session);",
     '    if (!process.env.CMUX_WORKSPACE_ID) return { ok: false, error: "Clone in new tab requires cmux" };',
     '    if (!sessionPath.startsWith("/") || /[\\u0000-\\u001f\\u007f]/.test(sessionPath)) return { ok: false, error: "Invalid saved session path" };',
     "    const result = spawnSync(\"cmux\", [",
-    '        "new-workspace", "--name", "Forked Pi Session",',
+    '        "new-workspace", "--name", cloneName,',
     '        "--cwd", cwd,',
     '        "--env", `PI_RESUME_CLONE_SESSION=${sessionPath}`,',
-    '        "--command", \'session="$PI_RESUME_CLONE_SESSION"; unset PI_RESUME_CLONE_SESSION; exec pi --fork "$session"\',',
+    '        "--env", `PI_RESUME_CLONE_NAME=${cloneName}`,',
+    '        "--command", \'session="$PI_RESUME_CLONE_SESSION"; name="$PI_RESUME_CLONE_NAME"; unset PI_RESUME_CLONE_SESSION PI_RESUME_CLONE_NAME; exec pi --fork "$session" --name "$name"\',',
     '        "--focus", "true",',
     '    ], { encoding: "utf8" });',
     '    if (result.error) return { ok: false, error: result.error.message };',

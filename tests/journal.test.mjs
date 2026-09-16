@@ -188,3 +188,19 @@ test("only one concurrent Pi session can claim the daily review", async () => {
   const state = await journal.maintenanceState();
   assert.equal(state.lastPromptedFor, "2026-07-26");
 });
+
+test("daily review claim can re-prompt a stale uncompleted date", async () => {
+  const { journal } = await harness();
+  assert.equal(
+    await journal.claimDistillation("2026-07-26", "2026-07-27T13:00:00.000Z"),
+    true
+  );
+  assert.equal(
+    await journal.claimDistillation("2026-07-26", "2026-07-27T14:00:00.000Z"),
+    false
+  );
+  assert.equal(
+    await journal.claimDistillation("2026-07-26", "2026-07-28T13:00:01.000Z"),
+    true
+  );
+});

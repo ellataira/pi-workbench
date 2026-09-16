@@ -16,6 +16,7 @@ npm ci
 npm test
 npm run bootstrap -- --replace-existing
 npm run install:pi-copy-picker
+npm run install:pi-escape-interrupt
 npm run install:pi-prompt-echo
 npm run install:pi-resume-clone
 npm run install:daily-review
@@ -198,6 +199,13 @@ Re-run `npm run install:pi-prompt-echo` after upgrading Pi; the guarded patch
 fails closed if Pi's native submit path has changed. Restart Pi after installing
 it; `/reload` cannot replace the already-loaded native UI class.
 
+Escape is also patched to remain a reliable interrupt while Pi is actively
+streaming, running bash, compacting, or retrying. If autocomplete is open,
+Escape closes it first and then forwards the same keypress to Pi's normal
+interrupt/cancel handler only during active work. Normal prompt editing still
+uses Escape to close autocomplete without interrupting an idle session.
+Re-run `npm run install:pi-escape-interrupt` after upgrading Pi and restart Pi.
+
 Native model-callable tools:
 
 | Tool | Purpose |
@@ -308,7 +316,9 @@ want to exit but keep the session available in `/resume`.
 
 In `/resume`, highlight any saved session and press `Alt+Enter` to clone its
 active branch into a new focused cmux tab. The original session and the current
-tab remain unchanged, and you do not need to expose or copy its session ID.
+tab remain unchanged, and you do not need to expose or copy its session ID. The
+new cmux workspace and Pi session are named from the selected session with
+`-clone` appended, so cloned branches are easy to distinguish.
 
 Automatic compaction keeps a 49,152-token safety reserve and retains roughly
 20,000 recent tokens. For the installed 272k-context model this triggers near
@@ -675,7 +685,8 @@ completed together in one bounded local pass; Pi stops at the first date that
 needs your decision. Pi retrieves only compressed
 session candidates, shows their scope, topics, and provenance, then asks which
 ones to promote, edit, skip, or snooze. Promotion always requires an explicit
-user choice.
+user choice. If you miss or dismiss a review prompt, Pi re-prompts that same
+oldest uncompleted date after 24 hours instead of suppressing it forever.
 
 Start or retry a review manually:
 
@@ -693,16 +704,16 @@ Reinstall the exact-time reminder after moving this package:
 ~/.agents/extensions/agent-journal/scripts/install-daily-review-reminder.sh
 ```
 
-### Monthly Pi health audit
+### Twice-monthly Pi health audit
 
-Install the privacy-safe monthly audit once (and again after moving this repo):
+Install the privacy-safe twice-monthly audit once (and again after moving this repo):
 
 ```bash
 cd ~/.agents/extensions/agent-journal
 npm run install:monthly-audit
 ```
 
-At 10:00 on the first day of each month it catches up link-only daily rollups,
+At 10:00 on the 1st and 15th of each month it catches up link-only daily rollups,
 writes a 30-day report, runs the memory canary and full test suite, and adds one
 fixed failed item to `/inbox` if any check or health threshold regresses. A
 successful run clears that fixed alert. Run the same checks manually with:
@@ -721,7 +732,7 @@ Review and pair-terminal usage comes from explicit successful-open markers, so
 review suggestions and status checks do not inflate usage. Error-rate warnings
 require a bounded minimum sample before they become actionable.
 New automatic recalls append only result counts to the native Pi session so the
-monthly report can measure hit and cold-rehydration rates without retaining the
+twice-monthly report can measure hit and cold-rehydration rates without retaining the
 query. Reports live under `agent-journal/audits/YYYY/MM/`.
 
 ### Local retention

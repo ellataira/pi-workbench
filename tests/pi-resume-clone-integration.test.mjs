@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 
 import {
   buildResumeCloneWorkspaceArgs,
+  cloneSessionName,
   patchPiResumeCloneKeybindingsSource,
   patchPiResumeCloneSelectorSource
 } from "../src/pi-resume-clone-integration.mjs";
@@ -60,22 +61,42 @@ export class SessionSelectorComponent {
 test("resume clone launches the selected saved session without embedding its path in shell text", () => {
   const args = buildResumeCloneWorkspaceArgs({
     path: "/Users/ella/Sessions/session with spaces.jsonl",
-    cwd: "/Users/ella/Desktop/example-repo"
+    cwd: "/Users/ella/Desktop/example-repo",
+    name: "Metric plan"
   });
 
   assert.deepEqual(args.slice(0, 6), [
     "new-workspace",
     "--name",
-    "Forked Pi Session",
+    "Metric plan-clone",
     "--cwd",
     "/Users/ella/Desktop/example-repo",
     "--env"
   ]);
   assert.match(args[6], /^PI_RESUME_CLONE_SESSION=/);
+  assert.equal(args[7], "--env");
+  assert.equal(args[8], "PI_RESUME_CLONE_NAME=Metric plan-clone");
   assert.equal(args.at(-2), "--focus");
   assert.equal(args.at(-1), "true");
-  assert.match(args[8], /pi --fork "\$session"/);
-  assert.doesNotMatch(args[8], /session with spaces/);
+  assert.match(args[10], /pi --fork "\$session" --name "\$name"/);
+  assert.doesNotMatch(args[10], /session with spaces/);
+  assert.doesNotMatch(args[10], /Metric plan/);
+});
+
+test("resume clone names fall back to a bounded session filename clone", () => {
+  assert.equal(
+    cloneSessionName({
+      path: "/Users/ella/.pi/agent/sessions/project/2026-09-15T12-00-00-my-task.jsonl"
+    }),
+    "2026-09-15T12-00-00-my-task-clone"
+  );
+  assert.equal(
+    cloneSessionName({
+      path: "/Users/ella/.pi/agent/sessions/project/long.jsonl",
+      name: "  Existing clone  "
+    }),
+    "Existing clone-clone"
+  );
 });
 
 test("resume clone patch adds a discoverable Alt+Enter action and fails closed", () => {
@@ -90,6 +111,8 @@ test("resume clone patch adds a discoverable Alt+Enter action and fails closed",
   assert.match(selector.source, /keyHint\("app\.session\.clone", "clone in new tab"\)/);
   assert.match(selector.source, /onCloneSession/);
   assert.match(selector.source, /launchResumeClone/);
+  assert.match(selector.source, /PI_RESUME_CLONE_NAME/);
+  assert.match(selector.source, /--name "\$name"/);
   assert.equal(patchPiResumeCloneKeybindingsSource(keybindings.source).changed, false);
   assert.equal(patchPiResumeCloneSelectorSource(selector.source).changed, false);
 

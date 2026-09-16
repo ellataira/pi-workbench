@@ -528,7 +528,11 @@ export class AgentJournal {
       const current = await this.maintenanceState();
       if (
         String(current.completedThrough ?? "") >= date ||
-        current.lastPromptedFor === date
+        (
+          current.lastPromptedFor === date &&
+          Number.isFinite(Date.parse(current.lastPromptedAt ?? "")) &&
+          Date.parse(timestamp) - Date.parse(current.lastPromptedAt) < 24 * 60 * 60 * 1000
+        )
       ) {
         return false;
       }

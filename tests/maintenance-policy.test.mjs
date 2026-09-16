@@ -37,11 +37,21 @@ test("daily distillation becomes due at 9 AM New York for the previous day", () 
   assert.equal(due, "2026-07-26");
 });
 
-test("daily distillation prompts once and remains complete once reviewed", () => {
+test("daily distillation prompts once per day and remains complete once reviewed", () => {
   const now = new Date("2026-07-27T14:00:00.000Z");
   assert.equal(
-    distillationTarget(now, { lastPromptedFor: "2026-07-26" }),
+    distillationTarget(now, {
+      lastPromptedFor: "2026-07-26",
+      lastPromptedAt: "2026-07-27T13:00:00.000Z"
+    }),
     undefined
+  );
+  assert.equal(
+    distillationTarget(now, {
+      lastPromptedFor: "2026-07-26",
+      lastPromptedAt: "2026-07-26T13:00:00.000Z"
+    }),
+    "2026-07-26"
   );
   assert.equal(
     distillationTarget(now, { completedThrough: "2026-07-26" }),
