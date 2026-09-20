@@ -3,6 +3,11 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-20
+
+- Added a 24-hour quiet period after completing a daily memory promotion review
+  so catch-up does not quiz repeatedly in one sitting.
+
 ## 2026-09-16
 
 - Added reliable Escape interruption after autocomplete closes during active Pi

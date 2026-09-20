@@ -65,6 +65,10 @@ export function distillationTarget(now = new Date(), state = {}, options = {}) {
   const repromptAfterMs = Number(options.repromptAfterMs ?? DEFAULT_REPROMPT_AFTER_MS);
   const parts = zonedParts(now, timeZone);
   if (Number(parts.hour) < hour) return undefined;
+  const lastCompletedAt = Date.parse(state.lastDistillationCompletedAt ?? "");
+  if (Number.isFinite(lastCompletedAt) && now.getTime() - lastCompletedAt < repromptAfterMs) {
+    return undefined;
+  }
   const latest = previousDate(`${parts.year}-${parts.month}-${parts.day}`);
   const completed = String(state.completedThrough ?? "");
   if (completed >= latest) return undefined;

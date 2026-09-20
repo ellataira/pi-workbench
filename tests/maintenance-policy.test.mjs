@@ -59,6 +59,24 @@ test("daily distillation prompts once per day and remains complete once reviewed
   );
 });
 
+test("daily distillation waits a day after one promotion review before prompting the next catch-up date", () => {
+  const now = new Date("2026-09-16T19:00:00.000Z");
+  assert.equal(
+    distillationTarget(now, {
+      completedThrough: "2026-08-17",
+      lastDistillationCompletedAt: "2026-09-16T18:31:39.627Z"
+    }),
+    undefined
+  );
+  assert.equal(
+    distillationTarget(new Date("2026-09-17T19:00:00.000Z"), {
+      completedThrough: "2026-08-17",
+      lastDistillationCompletedAt: "2026-09-16T18:31:39.627Z"
+    }),
+    "2026-08-18"
+  );
+});
+
 test("daily distillation selects the oldest missed date as its scan start", () => {
   const target = distillationTarget(
     new Date("2026-07-27T14:00:00.000Z"),

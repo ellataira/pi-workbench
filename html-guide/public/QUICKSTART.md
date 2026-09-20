@@ -686,7 +686,10 @@ needs your decision. Pi retrieves only compressed
 session candidates, shows their scope, topics, and provenance, then asks which
 ones to promote, edit, skip, or snooze. Promotion always requires an explicit
 user choice. If you miss or dismiss a review prompt, Pi re-prompts that same
-oldest uncompleted date after 24 hours instead of suppressing it forever.
+oldest uncompleted date after 24 hours instead of suppressing it forever. After
+you complete one promotion review, automatic prompts pause for 24 hours before
+offering the next catch-up date; use `/distill YYYY-MM-DD` if you want to
+continue catch-up manually in one sitting.
 
 Start or retry a review manually:
 
