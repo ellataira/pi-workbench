@@ -1146,6 +1146,68 @@ test("review command defaults to the cumulative session workspace and reuses a c
   assert.match(source, /"origin\/main"/);
 });
 
+test("opening a newer review page supersedes the older page without losing staged comments", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "pi-review-single-active-"));
+  const markdownPath = path.join(root, "plan.md");
+  const commentsPath = path.join(root, "comments.json");
+  await writeFile(markdownPath, "# Plan\n\nKeep this comment.\n", "utf8");
+
+  const service = await createReviewServer({
+    allowedRoots: [root],
+    commentsPath,
+    onAppendDraft: async () => {}
+  });
+  t.after(() => service.close());
+
+  const first = await service.openFile(markdownPath);
+  const annotatedResponse = await fetch(`${service.baseUrl}/api/${first.capability}/annotate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "# Plan\n\nKeep this comment.\n",
+      start: 8,
+      end: 25,
+      comment: "Still needs attention"
+    })
+  });
+  assert.equal(annotatedResponse.status, 200);
+
+  const second = await service.openFile(markdownPath);
+
+  const supersededPage = await fetch(first.url);
+  assert.equal(supersededPage.status, 410);
+  assert.match(await supersededPage.text(), /Review superseded/);
+
+  const supersededApi = await fetch(
+    `${service.baseUrl}/api/${first.capability}/navigation`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }
+  );
+  assert.equal(supersededApi.status, 410);
+  assert.deepEqual(await supersededApi.json(), {
+    error: "Review superseded; use the newest /review window"
+  });
+
+  const currentPage = await fetch(second.url);
+  assert.equal(currentPage.status, 200);
+  const currentHtml = await currentPage.text();
+  assert.match(currentHtml, /Still needs attention/);
+  assert.match(currentHtml, /response\.status===410/);
+  assert.match(currentHtml, /window\.location\.replace\("\/superseded"\)/);
+
+  const currentApi = await fetch(
+    `${service.baseUrl}/api/${second.capability}/navigation`,
+    { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }
+  );
+  assert.equal(currentApi.status, 200);
+
+  const unknownPage = await fetch(`${service.baseUrl}/review/${"a".repeat(48)}`);
+  assert.equal(unknownPage.status, 404);
+
+  const supersededLanding = await fetch(`${service.baseUrl}/superseded`);
+  assert.equal(supersededLanding.status, 410);
+  assert.match(await supersededLanding.text(), /Review superseded/);
+});
+
 test("loopback review service saves markdown atomically and keeps draft text transient", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "pi-review-surface-"));
   const markdownPath = path.join(root, "plan.md");
@@ -1312,12 +1374,24 @@ test("an open review page can recover its capability after the loopback server r
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       sourcePath,
-      recoveryToken
+      recoveryToken,
+      capability: opened.capability
     })
   });
   assert.equal(recoveredResponse.status, 200);
   const recovered = await recoveredResponse.json();
   assert.match(recovered.capability, /^[a-f0-9]+$/);
+
+  const supersededRecovery = await fetch(`${second.baseUrl}/recover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      sourcePath,
+      recoveryToken,
+      capability: "b".repeat(48)
+    })
+  });
+  assert.equal(supersededRecovery.status, 410);
 
   const saveResponse = await fetch(
     `${second.baseUrl}/api/${recovered.capability}/save`,
@@ -1597,11 +1671,15 @@ test("session Markdown review batches survive file switches across documents", a
   assert.equal(secondAnnotated.status, 200);
   assert.equal((await secondAnnotated.json()).workspaceAnnotationCount, 2);
 
-  const firstAgainPage = await fetch(first.url);
+  const secondNavigationResponse = await post(secondCapability, "navigation");
+  const firstAgainUrl = (await secondNavigationResponse.json()).navigation[0].url;
+  const firstAgainPage = await fetch(firstAgainUrl);
+  const firstAgainCapability = firstAgainPage.url.match(/\/review\/([a-f0-9]+)$/)?.[1];
+  assert.ok(firstAgainCapability);
   const firstAgainHtml = await firstAgainPage.text();
   assert.match(firstAgainHtml, /Clarify first\./);
 
-  const batchResponse = await post(secondCapability, "draft-batch");
+  const batchResponse = await post(firstAgainCapability, "draft-batch");
   assert.equal(batchResponse.status, 204);
   assert.equal(drafts.length, 1);
   assert.match(drafts[0], /Markdown review batch \(2 inline comments across 2 files\):/);
@@ -1618,12 +1696,14 @@ test("session Markdown review batches survive file switches across documents", a
   await writeFile(firstPath, "First claim addressed.\n", "utf8");
   await writeFile(secondPath, "Second claim addressed.\n", "utf8");
 
-  const firstAfterAddressed = await fetch(first.url);
+  const firstAfterAddressed = await fetch(firstAgainPage.url);
   const firstAfterAddressedHtml = await firstAfterAddressed.text();
   assert.match(firstAfterAddressedHtml, /First claim addressed\./);
   assert.doesNotMatch(firstAfterAddressedHtml, /Clarify first\./);
 
-  const secondAfterAddressed = await fetch(secondPage.url);
+  const firstAfterNavigation = await post(firstAgainCapability, "navigation");
+  const secondAfterAddressedUrl = (await firstAfterNavigation.json()).navigation[1].url;
+  const secondAfterAddressed = await fetch(secondAfterAddressedUrl);
   const secondAfterAddressedHtml = await secondAfterAddressed.text();
   assert.match(secondAfterAddressedHtml, /Second claim addressed\./);
   assert.doesNotMatch(secondAfterAddressedHtml, /Clarify second\./);

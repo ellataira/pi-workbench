@@ -26,7 +26,6 @@ const MAX_SELECTION_CHARS = 16_000;
 const MAX_COMMENT_CHARS = 8_000;
 const MAX_RENDER_BYTES = 8 * 1024 * 1024;
 const MAX_ASSET_BYTES = 10 * 1024 * 1024;
-const MAX_OPEN_CAPABILITIES = 64;
 const MAX_REVIEW_WORKSPACES = 8;
 const MAX_REVIEW_WORKSPACE_FILES = 100;
 const MAX_BATCH_COMMENTS = 50;
@@ -714,6 +713,32 @@ function sendJson(response, status, body) {
   response.end(encoded);
 }
 
+function sendSupersededPage(response) {
+  const encoded = Buffer.from(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pi Review · Superseded</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--text:#202124;--muted:#68707a;--border:#d7dce2;--accent:#6750a4}
+@media(prefers-color-scheme:dark){:root{--bg:#15171a;--card:#1d2024;--text:#edf0f4;--muted:#9da6b1;--border:#353b43;--accent:#c7b3ff}}
+*{box-sizing:border-box}body{display:grid;min-height:100vh;margin:0;padding:24px;place-items:center;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{width:min(520px,100%);padding:28px;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 16px 48px rgb(0 0 0/.12)}h1{margin:0 0 8px;font-size:22px}p{margin:0;color:var(--muted)}strong{color:var(--accent)}
+</style>
+</head>
+<body><main><h1>Review superseded</h1><p>A newer <strong>/review</strong> window is active for this Pi session. You can close this tab.</p></main></body>
+</html>`);
+  response.writeHead(410, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": encoded.length,
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff"
+  });
+  response.end(encoded);
+}
+
 function sendEmpty(response, status = 204) {
   response.writeHead(status, { "cache-control": "no-store" });
   response.end();
@@ -1005,13 +1030,14 @@ async function recoverCapability(){
   let response;
   for(let attempt=0;attempt<10;attempt+=1){
     try{
-      response=await fetch("/recover",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourcePath:state.sourcePath,recoveryToken:state.recoveryToken,displayTitle:state.displayTitle,displayScope:state.displayScope,workspaceToken:state.workspaceToken,workspaceIndex:state.workspaceIndex})});
+      response=await fetch("/recover",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sourcePath:state.sourcePath,recoveryToken:state.recoveryToken,capability:state.capability,displayTitle:state.displayTitle,displayScope:state.displayScope,workspaceToken:state.workspaceToken,workspaceIndex:state.workspaceIndex})});
       break;
     }catch(error){
       if(attempt===9)throw new Error("Review session changed; run /review once to reopen this file");
       await new Promise((resolve)=>setTimeout(resolve,150));
     }
   }
+  if(response.status===410){window.location.replace("/superseded");throw new Error("Review superseded; use the newest /review window")}
   if(!response.ok)throw new Error("Review session changed; run /review once to reopen this file");
   const recovered=await response.json();
   state.capability=recovered.capability;
@@ -1022,6 +1048,7 @@ const api=async(action,body={})=>{
   try{response=await requestApi(action,body)}
   catch{await recoverCapability();response=await requestApi(action,body)}
   if(response.status===404){await recoverCapability();response=await requestApi(action,body)}
+  if(response.status===410){window.location.replace("/superseded");const error=new Error("Review superseded; use the newest /review window");error.status=410;throw error}
   if(!response.ok){let detail="";try{detail=(await response.json()).error||""}catch{}const error=new Error(detail||("Request failed: "+response.status));error.status=response.status;throw error}
   if(response.status===204)return null;
   return response.json();
@@ -1402,7 +1429,21 @@ export async function createReviewServer({
   const workspaces = new Map();
   const markdownDrafts = new Map();
   const bridgeToken = randomBytes(32).toString("hex");
+  const capabilityEpoch = randomBytes(8).toString("hex");
+  let activeCapability = "";
   let commentMutation = Promise.resolve();
+
+  function activateCapability(capability, entry) {
+    if (activeCapability) {
+      capabilities.delete(activeCapability);
+    }
+    activeCapability = capability;
+    capabilities.set(capability, entry);
+  }
+
+  function isSupersededCapability(capability) {
+    return capability.startsWith(capabilityEpoch) && capability !== activeCapability;
+  }
 
   function recoveryTokenFor(sourcePath) {
     return createHmac("sha256", recoverySecret)
@@ -1439,14 +1480,11 @@ export async function createReviewServer({
       markdownDraft = undefined;
     }
     const content = markdownDraft?.content ?? diskContent;
-    const capability = randomBytes(24).toString("hex");
+    const capability = `${capabilityEpoch}${randomBytes(16).toString("hex")}`;
     const comments = resolved.kind === "diff"
       ? (await readComments(commentsPath)).filter((entry) => entry.sourcePath === resolved.path && !entry.resolved)
       : [];
-    if (capabilities.size >= MAX_OPEN_CAPABILITIES) {
-      capabilities.delete(capabilities.keys().next().value);
-    }
-    capabilities.set(capability, {
+    activateCapability(capability, {
       sourcePath: resolved.path,
       displayTitle: display.title,
       displayScope: display.scope,
@@ -1601,8 +1639,13 @@ export async function createReviewServer({
       const assetMatch = url.pathname.match(/^\/asset\/([a-f0-9]+)$/);
       const apiMatch = url.pathname.match(/^\/api\/([a-f0-9]+)\/([a-z-]+)$/);
 
+      if (request.method === "GET" && url.pathname === "/superseded") {
+        return sendSupersededPage(response);
+      }
+
       if (request.method === "GET" && pageMatch) {
         const capability = pageMatch[1];
+        if (isSupersededCapability(capability)) return sendSupersededPage(response);
         const entry = capabilities.get(capability);
         if (!entry) return sendJson(response, 404, { error: "Review capability not found" });
         await refreshSubmittedMarkdownDraft(entry);
@@ -1638,6 +1681,9 @@ export async function createReviewServer({
       }
 
       if (request.method === "GET" && assetMatch) {
+        if (isSupersededCapability(assetMatch[1])) {
+          return sendJson(response, 410, { error: "Review superseded; use the newest /review window" });
+        }
         const entry = capabilities.get(assetMatch[1]);
         if (!entry) return sendJson(response, 404, { error: "Review capability not found" });
         const requested = url.searchParams.get("path") ?? "";
@@ -1682,6 +1728,17 @@ export async function createReviewServer({
         if (!validRecoveryToken(sourcePath, body.recoveryToken)) {
           return sendJson(response, 401, { error: "Invalid review recovery token" });
         }
+        const previousCapability = String(body.capability ?? "");
+        if (activeCapability) {
+          if (previousCapability !== activeCapability) {
+            return sendJson(response, 410, { error: "Review superseded; use the newest /review window" });
+          }
+          const activeEntry = capabilities.get(activeCapability);
+          return sendJson(response, 200, {
+            capability: activeCapability,
+            mtimeMs: activeEntry.mtimeMs
+          });
+        }
         const opened = await openFile(sourcePath, {
           title: body.displayTitle,
           scope: body.displayScope
@@ -1707,6 +1764,9 @@ export async function createReviewServer({
 
       if (request.method === "POST" && apiMatch) {
         const [, capability, action] = apiMatch;
+        if (isSupersededCapability(capability)) {
+          return sendJson(response, 410, { error: "Review superseded; use the newest /review window" });
+        }
         const entry = capabilities.get(capability);
         if (!entry) return sendJson(response, 404, { error: "Review capability not found" });
         const body = await readJsonBody(request);
@@ -1969,6 +2029,7 @@ export async function createReviewServer({
     setWorkspace,
     close: () => new Promise((resolve) => {
       capabilities.clear();
+      activeCapability = "";
       server.close(() => resolve());
     })
   };

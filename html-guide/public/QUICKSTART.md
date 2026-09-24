@@ -965,8 +965,13 @@ From Pi:
 
 Running `/review` with no argument opens the cumulative session review workspace
 in a dedicated cmux popout. Later `/review` calls focus that same window and
-replace the current review page instead of creating more browser tabs. The file
-sidebar contains paths changed during the current Pi session, up to 100, plus a separate **Relevant files**
+replace the current review page instead of creating more browser tabs. The review
+server also permits only one active review page per Pi session, including when
+cmux falls back to the default browser. Opening a newer review page preserves
+staged comment chips in the shared workspace draft, but supersedes every older
+page. Within the next two-second refresh check, an older tab changes to a clear
+**Review superseded** page and no longer accepts review actions. The file sidebar
+contains paths changed during the current Pi session, up to 100, plus a separate **Relevant files**
 shortlist of up to eight paths. The shortlist is selected from substantive work
 or explicitly pinned; it does not scan every plan-like Markdown file. It stores
 only path, reason, source, and timestamp metadata and survives `/reload`.

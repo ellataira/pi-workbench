@@ -3,6 +3,12 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-24
+
+- Limited each Pi session to one active `/review` page, preserving staged
+  comment chips in the newest pane while older browser tabs switch to a clear
+  read-only superseded page.
+
 ## 2026-09-20
 
 - Added a 24-hour quiet period after completing a daily memory promotion review
