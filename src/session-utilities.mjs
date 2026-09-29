@@ -82,6 +82,30 @@ export function latestAssistantText(entries) {
   return "";
 }
 
+export function recommendedCopyCommand(messages) {
+  if (!Array.isArray(messages)) return "";
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") continue;
+    return extractCliCommands(textContent(message.content), { limit: 1 })[0] ?? "";
+  }
+  return "";
+}
+
+export function registerAutomaticCommandCopy(pi, copyCommand) {
+  pi.on("agent_end", async (event, ctx) => {
+    const command = recommendedCopyCommand(event.messages);
+    if (!command) return;
+    try {
+      await copyCommand(command);
+    } catch {
+      if (ctx.hasUI) {
+        ctx.ui.notify("Suggested command could not be copied to the clipboard.", "warning");
+      }
+    }
+  });
+}
+
 export function latestCopyableAssistantText(entries) {
   if (!Array.isArray(entries)) return { text: "", cached: false };
   let latestText = "";

@@ -44,7 +44,7 @@ changed.
 |---|---|---|
 | `/review` | Open or focus the cumulative session review popout | `/review choose`, `/review <path>`, `/review pin <path>`, `/review unpin <path>`, `/review git`, `/review git staged`, `/review git <base>` |
 | `/rewind` | Choose an earlier user message, restore it to the editor, and preserve the abandoned branch | `/tree` for the complete native tree |
-| `/copy` | Copy the suggested CLI command immediately, then optionally choose another command or the whole response | `/copy-command` is the vendor-neutral fallback |
+| Automatic command copy | Copy the first suggested CLI command when Pi finishes responding | `/copy` re-copies the latest suggestion and opens the chooser; `/copy-command` is the vendor-neutral fallback |
 | `/agents` | Open the Agent Center without changing tabs | Choose **Run parallel task**, **Start implementation agent**, an existing persistent child, or an active background run |
 | `/memory` | Inspect status or choose checkpoint, daily review, cleanup, or integrity work | `/checkpoint`, `/distill`, `/memory audit`, `/memory cleanup`, `/memory integrity` |
 | `/inbox` | Select an action item, focus its cmux workspace, or acknowledge it | `/inbox list`, `/inbox clear completed`, `/inbox clear stale` |
@@ -439,6 +439,9 @@ Agent Center** and **Show this child’s routing details**. Child rows use their
 worktree paths, so the chooser never renders an `undefined` location.
 
 The on-screen hierarchy is explicit:
+
+The bounded live tail excludes Agent Center navigation chrome, so the
+`manage: /agents` hint appears once instead of feeding back into later refreshes.
 
 ```text
 Agent Center · supervisor · 2 active agents
@@ -1175,12 +1178,14 @@ prompt, or transcript.
 message to the editor so it can be changed and resubmitted. Pi preserves the
 abandoned conversation branch and does not roll back filesystem changes.
 
-`/copy` scans the newest Pi response that contains fenced shell blocks or
-command-shaped inline code. It immediately copies the suggested command to the
-macOS clipboard, then opens a picker in case you want a different command or the
-entire response. Later prose-only replies do not evict the previous command, so
-you can keep talking and still `Cmd+V` the last recommended CLI when you are
-ready. A newer response with a copyable command replaces that cached source.
+When Pi finishes a response containing fenced shell blocks or command-shaped
+inline code, it automatically copies the first suggested command to the macOS
+clipboard. Prose-only responses leave the clipboard unchanged. `/copy` scans
+the newest Pi response containing a command, re-copies its suggestion, then
+opens a picker in case you want a different command or the entire response.
+Later prose-only replies do not evict that manual `/copy` source, so you can
+keep talking and still recover the last recommended CLI. A newer response with
+a copyable command replaces the cached source.
 Independent one-line commands in a shell block are offered separately. Compound
 scripts containing assignments, blank-line-separated setup, command
 substitutions, heredocs, or shell control blocks are offered as one complete

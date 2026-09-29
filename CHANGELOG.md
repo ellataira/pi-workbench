@@ -3,6 +3,13 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-28
+
+- Prevented the Agent Center's `manage: /agents` footer from feeding back into
+  bounded child tails and multiplying on each supervisor refresh.
+- Automatically copied the first suggested CLI command when Pi finishes a
+  response, while keeping `/copy` available for older suggestions and choices.
+
 ## 2026-09-24
 
 - Limited each Pi session to one active `/review` page, preserving staged

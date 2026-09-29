@@ -214,6 +214,7 @@ export function childScreenTail(
     .filter((line) => !/^[─━═_\-=\s]+$/.test(line))
     .filter((line) => line !== ">")
     .filter((line) => !(line.includes("think:") && /\b\d+(?:\.\d+)?%/.test(line)))
+    .filter((line) => !/^(?:↳\s*)*manage: \/agents \(stays in this tab\)$/.test(line))
     .map((line) => line
       .replace(SECRET_VALUE, "$1[redacted]")
       .replace(TOKEN_VALUE, "[redacted]")

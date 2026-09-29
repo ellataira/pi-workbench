@@ -8,6 +8,8 @@ import {
   extractCliCommands,
   latestAssistantText,
   latestCopyableAssistantText,
+  recommendedCopyCommand,
+  registerAutomaticCommandCopy,
   resolveSessionDeletionTarget
 } from "../src/session-utilities.mjs";
 
@@ -275,6 +277,61 @@ test("copy source falls back to latest assistant text when no CLI exists", () =>
   );
 });
 
+test("automatic copy uses only the newest assistant response's suggested command", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "Old command: `git status --short`."
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "private" },
+        { type: "text", text: "Run `npm test`, then `git diff --check`." }
+      ]
+    }
+  ];
+
+  assert.equal(recommendedCopyCommand(messages), "npm test");
+  assert.equal(
+    recommendedCopyCommand([
+      ...messages,
+      {
+        role: "assistant",
+        content: "No command is needed now."
+      }
+    ]),
+    ""
+  );
+});
+
+test("automatic copy handles the agent lifecycle with a mocked clipboard", async () => {
+  let agentEnd;
+  const copied = [];
+  const notifications = [];
+  registerAutomaticCommandCopy(
+    {
+      on(event, handler) {
+        if (event === "agent_end") agentEnd = handler;
+      }
+    },
+    async (command) => copied.push(command)
+  );
+
+  assert.equal(typeof agentEnd, "function");
+  await agentEnd(
+    { messages: [{ role: "assistant", content: "Run `npm test`." }] },
+    { hasUI: true, ui: { notify: (...args) => notifications.push(args) } }
+  );
+  await agentEnd(
+    { messages: [{ role: "assistant", content: "No command needed." }] },
+    { hasUI: true, ui: { notify: (...args) => notifications.push(args) } }
+  );
+
+  assert.deepEqual(copied, ["npm test"]);
+  assert.deepEqual(notifications, []);
+});
+
 test("session utilities register rewind, rename, end, and a non-conflicting command picker", async () => {
   const source = await readFile(
     new URL("../extensions/pi-session-utilities.ts", import.meta.url),
@@ -286,6 +343,7 @@ test("session utilities register rewind, rename, end, and a non-conflicting comm
   assert.doesNotMatch(source, /registerCommand\("copy"/);
   assert.match(source, /copyToClipboard\(choices\[0\]\.command\)/);
   assert.match(source, /copyToClipboard\(choice\.command\)/);
+  assert.match(source, /registerAutomaticCommandCopy\(pi, copyToClipboard\)/);
   assert.match(source, /buildCopyChoices/);
   assert.match(source, /registerCommand\("rename"/);
   assert.match(source, /pi\.setSessionName\(name\)/);

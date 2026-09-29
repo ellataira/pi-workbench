@@ -523,6 +523,18 @@ test("child screen tails are line and character bounded", () => {
   );
 });
 
+test("child screen tails exclude recursive agent center navigation", () => {
+  assert.deepEqual(
+    childScreenTail([
+      "Running focused controller tests",
+      "manage: /agents (stays in this tab)",
+      "↳ manage: /agents (stays in this tab)",
+      "↳ ↳ ↳ manage: /agents (stays in this tab)"
+    ].join("\n")),
+    ["Running focused controller tests"]
+  );
+});
+
 test("parent progress makes stale and stopped children unambiguous", () => {
   const child = {
     sessionId: "child-123",

@@ -16,8 +16,11 @@ export default async function sessionUtilitiesExtension(pi: ExtensionAPI) {
 		buildCopyChoices,
 		buildRewindChoices,
 		latestCopyableAssistantText,
+		registerAutomaticCommandCopy,
 		resolveSessionDeletionTarget,
 	} = await importFreshSourceModule(utilitiesPath);
+
+	registerAutomaticCommandCopy(pi, copyToClipboard);
 
 	pi.registerCommand("rewind", {
 		description: "Choose an earlier chat point and resume from there",
