@@ -174,21 +174,6 @@ export function normalizeBackgroundSubagentRun(value) {
   };
 }
 
-function childActivityLabel(progress, now) {
-  const updatedAt = progress?.updatedAt;
-  const ageMs = Math.max(0, now - Date.parse(updatedAt));
-  const answeredAt = Date.parse(progress?.lastUserInputAt);
-  const answeredMs = Number.isFinite(answeredAt) ? now - answeredAt : Infinity;
-  const prefix = answeredMs >= 0 && answeredMs < 15 * 60_000 ? "answered in child · " : "";
-  if (ageMs < 10_000) return `${prefix}active now`;
-  const age = ageMs < 60_000
-    ? `${Math.floor(ageMs / 1000)}s ago`
-    : ageMs < 3_600_000
-      ? `${Math.floor(ageMs / 60_000)}m ago`
-      : `${Math.floor(ageMs / 3_600_000)}h ago`;
-  return `${prefix}${ageMs >= 15_000 ? `heartbeat stale · ${age}` : age}`;
-}
-
 function childPhaseLabel(progress) {
   if (!progress) return "starting";
   if (progress.phase === "tool") return `working: ${progress.toolName || "tool"}`;
@@ -214,7 +199,8 @@ export function childScreenTail(
     .filter((line) => !/^[─━═_\-=\s]+$/.test(line))
     .filter((line) => line !== ">")
     .filter((line) => !(line.includes("think:") && /\b\d+(?:\.\d+)?%/.test(line)))
-    .filter((line) => !/^(?:↳\s*)*manage: \/agents \(stays in this tab\)$/.test(line))
+    .filter((line) => !/^(?:↳\s*)+$/.test(line))
+    .filter((line) => !/^(?:↳\s*)*(?:manage: \/agents \(stays in this tab\)(?:\s+.*)?|elapsed=\d+s)$/.test(line))
     .map((line) => line
       .replace(SECRET_VALUE, "$1[redacted]")
       .replace(TOKEN_VALUE, "[redacted]")
@@ -225,7 +211,7 @@ export function childScreenTail(
 export function formatChildProgressLines(
   children,
   progressBySessionId,
-  { now = Date.now(), limit = 4, screenTailBySessionId = new Map(), backgroundRuns = [] } = {}
+  { limit = 4, backgroundRuns = [] } = {}
 ) {
   const visible = (Array.isArray(children) ? children : [])
     .map((child) => ({ child, progress: progressBySessionId?.get(child.sessionId) ?? null }))
@@ -237,7 +223,7 @@ export function formatChildProgressLines(
   const total = visible.length + visibleBackground.length;
   if (!total) return [];
   const lines = [
-    `Agent Center · supervisor · ${total} active agent${total === 1 ? "" : "s"}`
+    `Agent Center · ${total} active`
   ];
   const rows = [
     ...visible.map((entry) => ({ type: "child", ...entry })),
@@ -246,25 +232,12 @@ export function formatChildProgressLines(
   for (const [index, row] of rows.entries()) {
     const tree = index === rows.length - 1 ? "└─" : "├─";
     if (row.type === "background") {
-      const activity = childActivityLabel({ updatedAt: row.run.updatedAt }, now);
-      const agents = row.run.agents?.length ? ` · ${row.run.agents.join(", ")}` : "";
-      const progress = row.run.progress ? ` · ${row.run.progress}` : "";
-      lines.push(`${tree} background ${row.run.id.slice(0, 9)} · ${row.run.state}${progress}${agents} · ${activity}`);
-      lines.push(`   ${row.run.cwd || row.run.mode || "background subagent"}`);
-      lines.push("   inspect: /subagents-fleet");
+      lines.push(`${tree} background ${row.run.id.slice(0, 9)} · ${row.run.state}`);
       continue;
     }
     const { child, progress } = row;
-    const activity = progress?.updatedAt
-      ? childActivityLabel(progress, now)
-      : "startup pending";
-    lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)} · ${activity}`);
-    lines.push(`   ${child.branch || child.cwd || "isolated workspace"}`);
-    for (const line of screenTailBySessionId.get(child.sessionId) ?? []) {
-      lines.push(`   ↳ ${line}`);
-    }
+    lines.push(`${tree} ${child.name} · ${childPhaseLabel(progress)}`);
   }
-  lines.push("   manage: /agents (stays in this tab)");
   return lines;
 }
 
@@ -272,7 +245,7 @@ export function formatChildIdentityLines(name = "delegated agent") {
   return [
     `Agent Center · ${String(name).trim() || "delegated agent"} (worker tab)`,
     "Run /agents to return to the supervisor",
-    "The supervisor follows a bounded live tail automatically"
+    "The supervisor shows lifecycle state automatically"
   ];
 }
 
@@ -414,7 +387,6 @@ export function buildAgentChoices(children = [], backgroundRuns = []) {
 
 export function buildAgentCenterActions() {
   return [
-    "Follow here",
     "Send instruction…",
     "Review changes…",
     "Open child tab…",

@@ -280,7 +280,6 @@ test("agent center uses plain language and keeps child management in the parent"
     ]
   );
   assert.deepEqual(buildAgentCenterActions(), [
-    "Follow here",
     "Send instruction…",
     "Review changes…",
     "Open child tab…",
@@ -407,10 +406,8 @@ test("parent progress makes child-side answers visible without duplicating the q
   );
 
   assert.deepEqual(lines, [
-    "Agent Center · supervisor · 1 active agent",
-    "└─ campaign-core · thinking · answered in child · active now",
-    "   pi/campaign-core",
-    "   manage: /agents (stays in this tab)"
+    "Agent Center · 1 active",
+    "└─ campaign-core · thinking"
   ]);
   assert.doesNotMatch(lines.join("\n"), /raw answer/);
 });
@@ -429,10 +426,8 @@ test("parent progress keeps navigation behind the agent center", () => {
       { now: Date.parse("2026-08-21T12:00:00.000Z") }
     ),
     [
-      "Agent Center · supervisor · 1 active agent",
-      "└─ campaign-core · working: apply_patch · active now",
-      "   pi/campaign-core",
-      "   manage: /agents (stays in this tab)"
+      "Agent Center · 1 active",
+      "└─ campaign-core · working: apply_patch"
     ]
   );
 });
@@ -464,13 +459,9 @@ test("parent progress includes active background subagents separately from cmux 
   );
 
   assert.deepEqual(lines, [
-    "Agent Center · supervisor · 2 active agents",
-    "├─ campaign-core · thinking · active now",
-    "   pi/campaign-core",
-    "└─ background async-123 · running · 2/4 running · reviewer, scout · active now",
-    "   /repo",
-    "   inspect: /subagents-fleet",
-    "   manage: /agents (stays in this tab)"
+    "Agent Center · 2 active",
+    "├─ campaign-core · thinking",
+    "└─ background async-123 · running"
   ]);
   assert.doesNotMatch(lines.join("\n"), /secret prompt/);
 });
@@ -479,11 +470,11 @@ test("child identity widget explains how to return to the supervisor", () => {
   assert.deepEqual(formatChildIdentityLines("campaign-core"), [
     "Agent Center · campaign-core (worker tab)",
     "Run /agents to return to the supervisor",
-    "The supervisor follows a bounded live tail automatically"
+    "The supervisor shows lifecycle state automatically"
   ]);
 });
 
-test("parent progress can show a bounded redacted live child tail", () => {
+test("child screen previews stay bounded and redacted", () => {
   const tail = childScreenTail([
     "────────────────────────",
     "Authorization: Bearer super-secret-token",
@@ -500,38 +491,29 @@ test("parent progress can show a bounded redacted live child tail", () => {
     "Tests passed"
   ]);
   assert.doesNotMatch(tail.join("\n"), /secret-token|also-secret/);
-
-  const lines = formatChildProgressLines(
-    [{ sessionId: "child-123", name: "campaign-core", branch: "pi/campaign-core" }],
-    new Map(),
-    { screenTailBySessionId: new Map([["child-123", tail]]) }
-  );
-  assert.deepEqual(lines.filter((line) => line.includes("↳")), [
-    "   ↳ Working on controller tests",
-    "   ↳ API_KEY=[redacted]",
-    "   ↳ Tests passed"
-  ]);
 });
 
-test("child screen tails are line and character bounded", () => {
+test("child screen previews exclude recursive agent center navigation", () => {
+  assert.deepEqual(
+    childScreenTail([
+      "Running focused controller tests",
+      "manage: /agents (stays in this tab)",
+      "↳ manage: /agents (stays in this tab)",
+      "↳ ↳ ↳ manage: /agents (stays in this tab) fix this",
+      "↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳ ↳",
+      "↳ ↳ ↳ elapsed=304s"
+    ].join("\n")),
+    ["Running focused controller tests"]
+  );
+});
+
+test("child screen previews are line and character bounded", () => {
   assert.deepEqual(
     childScreenTail("first\nsecond is long\nthird\nfourth", {
       maxLines: 2,
       maxLineChars: 8
     }),
     ["third", "fourth"]
-  );
-});
-
-test("child screen tails exclude recursive agent center navigation", () => {
-  assert.deepEqual(
-    childScreenTail([
-      "Running focused controller tests",
-      "manage: /agents (stays in this tab)",
-      "↳ manage: /agents (stays in this tab)",
-      "↳ ↳ ↳ manage: /agents (stays in this tab)"
-    ].join("\n")),
-    ["Running focused controller tests"]
   );
 });
 
@@ -542,7 +524,7 @@ test("parent progress makes stale and stopped children unambiguous", () => {
     branch: "pi/campaign-core",
     createdAt: "2026-08-21T11:00:00.000Z"
   };
-  assert.match(
+  assert.equal(
     formatChildProgressLines(
       [child],
       new Map([["child-123", {
@@ -550,10 +532,9 @@ test("parent progress makes stale and stopped children unambiguous", () => {
         sessionId: "child-123",
         phase: "thinking",
         updatedAt: "2026-08-21T11:58:00.000Z"
-      }]]),
-      { now: Date.parse("2026-08-21T12:00:00.000Z") }
+      }]])
     )[1],
-    /heartbeat stale · 2m ago/
+    "└─ campaign-core · thinking"
   );
   assert.deepEqual(
     formatChildProgressLines(
@@ -599,12 +580,12 @@ test("supervisor exposes one agents command instead of implementation-detail ali
   assert.match(source, /registerCommand\("agents"/);
   assert.match(source, /action === "status"/);
   assert.match(source, /"read-screen"/);
-  assert.match(source, /action === "watch"/);
+  assert.doesNotMatch(source, /action === "watch"/);
   assert.match(source, /action === "parent"/);
   assert.match(source, /PI_CMUX_SUPERVISOR_WORKSPACE_ID/);
   assert.match(source, /openChildAgentsChooser/);
   assert.match(source, /Agent Center · .*stays in this tab/);
-  assert.match(source, /selected === "Follow here"/);
+  assert.doesNotMatch(source, /selected === "Follow here"/);
   assert.match(source, /selected === "Send instruction…"/);
   assert.match(source, /selected === "Review changes…"/);
   assert.match(source, /selected === "Open child tab…"/);

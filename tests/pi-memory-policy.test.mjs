@@ -378,6 +378,16 @@ test("daily distillation cannot create a session checkpoint loop", () => {
   assert.equal(shouldQueueAutoCheckpoint(state, assistant("Review complete.")), false);
 });
 
+test("daily distillation recommends conservative dispositions instead of implying promotion", () => {
+  const message = dailyDistillationMessage("2026-07-26");
+  assert.match(message, /review inputs, not endorsements/i);
+  assert.match(message, /recommend exactly one of promote, edit, skip, or snooze/i);
+  assert.match(message, /default recommendation is skip/i);
+  assert.match(message, /global only for cross-project/i);
+  assert.match(message, /project for durable repository-specific/i);
+  assert.match(message, /already documented/i);
+});
+
 test("recall context is bounded data with provenance rather than instructions", () => {
   const text = formatRecallContext({
     items: [{

@@ -3,6 +3,14 @@
 This file records user-visible Pi Workbench changes. The README stays concise
 and current; the quickstart holds complete usage details.
 
+## 2026-09-29
+
+- Simplified Agent Center to show only active child names and lifecycle phases;
+  removed recursive live-screen tails and unused follow controls.
+- Changed daily memory review from promotion-oriented presentation to
+  conservative, skip-by-default recommendations with explicit durability,
+  duplication, and global-versus-project scope criteria.
+
 ## 2026-09-28
 
 - Prevented the Agent Center's `manage: /agents` footer from feeding back into

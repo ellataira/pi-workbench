@@ -397,13 +397,11 @@ The supervisor:
 `/reload` reloads the supervisor's helper modules from fresh source as well as
 the extension, preventing mixed old/new module exports during local upgrades.
 
-The parent immediately shows an **Agent Center** widget with persistent child
-names, branches, lifecycle phases or active tools, heartbeat age, and a redacted
-three-line tail of the followed child's visible cmux output. The newest child is
-followed automatically, so you do not need to leave the parent just to
-understand what is happening. The tail is bounded, transient UI state: it is
-never appended to the Pi session, journal, progress files, or transcripts. The
-child separately writes only fixed progress metadata every five seconds.
+The parent immediately shows a compact **Agent Center** widget with each active
+child name and lifecycle phase. It reads fixed progress metadata only; it does
+not copy terminal screens, prompts, outputs, or transcripts into the parent.
+Open the child tab when you need detailed output. The child separately writes
+only fixed progress metadata every five seconds.
 
 Active background `pi-subagents` appear in the same widget as `background`
 rows. Those rows are read from fixed status metadata only: run id, state, mode,
@@ -414,17 +412,16 @@ read background task prompts, outputs, or transcripts for the Agent Center. Use
 Run `/agents`, then select the agent:
 
 ```text
-Follow here
 Send instruction…
 Review changes…
 Open child tab…
 More…
 ```
 
-The first three actions stay in the supervisor. **Review changes** prepares a
+The first two actions stay in the supervisor. **Review changes** prepares a
 bounded patch and places the review command in the editor. Only **Open child
 tab** switches your current tab. Recovery, interruption, patch preparation, and cleanup
-live under **More**. Existing children can be followed immediately;
+live under **More**. Existing children appear immediately;
 children created before heartbeat support still need one `/reload` only if you
 also want their structured lifecycle phase.
 
@@ -438,20 +435,12 @@ Center and never changes tabs by itself. In a child it shows only **Return to
 Agent Center** and **Show this child’s routing details**. Child rows use their
 worktree paths, so the chooser never renders an `undefined` location.
 
-The on-screen hierarchy is explicit:
-
-The bounded live tail excludes Agent Center navigation chrome, so the
-`manage: /agents` hint appears once instead of feeding back into later refreshes.
+The on-screen hierarchy is intentionally compact:
 
 ```text
-Agent Center · supervisor · 2 active agents
-├─ campaign-core · working: apply_patch · active now
-   pi/campaign-core
-   ↳ Running focused controller tests
-└─ background async-123 · running · 2/4 running · reviewer, scout · active now
-   /repo
-   inspect: /subagents-fleet
-   manage: /agents (stays in this tab)
+Agent Center · 2 active
+├─ campaign-core · working: apply_patch
+└─ background async-123 · running
 ```
 
 If you open the child and answer a question there, the parent marks that child
@@ -465,7 +454,7 @@ Inside the child, it changes to:
 ```text
 Agent Center · campaign-core (worker tab)
 Run /agents to return to the supervisor
-The supervisor follows a bounded live tail automatically
+The supervisor shows lifecycle state automatically
 ```
 
 Long tasks are never pasted into the shell. A launch is registered only after
@@ -688,7 +677,14 @@ completed together in one bounded local pass; Pi stops at the first date that
 needs your decision. Pi retrieves only compressed
 session candidates, shows their scope, topics, and provenance, then asks which
 ones to promote, edit, skip, or snooze. Promotion always requires an explicit
-user choice. If you miss or dismiss a review prompt, Pi re-prompts that same
+user choice. Candidates are review inputs rather than endorsements: Pi
+recommends one disposition per item and defaults to **skip** unless a lesson is
+durable, reusable beyond the source session, high-confidence, and not already
+documented or represented in memory. Global promotion is reserved for
+cross-project preferences or invariants; durable repository-specific lessons
+stay project-scoped. Routine completion reports, temporary status, one-off
+commands, dates, and already-documented facts are recommended for skipping.
+If you miss or dismiss a review prompt, Pi re-prompts that same
 oldest uncompleted date after 24 hours instead of suppressing it forever. After
 you complete one promotion review, automatic prompts pause for 24 hours before
 offering the next catch-up date; use `/distill YYYY-MM-DD` if you want to
@@ -1471,9 +1467,9 @@ children with `/subagents-fleet`; inspect aggregate cost with `/subagent-cost`.
 /agents persistent Add the new parser behavior, tests first, and update affected docs
 ```
 
-Progress and a bounded live tail remain in the parent. Open the child tab only
-when you want to chat with it directly or inspect full scrollback; otherwise
-keep working in the parent.
+Lifecycle progress remains in the parent. Open the child tab when you want to
+chat with it directly or inspect full scrollback; otherwise keep working in the
+parent.
 
 ### End a meaningful session
 

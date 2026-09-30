@@ -580,7 +580,7 @@ export default async function agentJournalExtension(pi: ExtensionAPI) {
 		name: "journal_distillation_candidates",
 		label: "Daily memory candidates",
 		description:
-			"Return compressed, provenance-linked session summaries for one calendar date so the user can choose what to promote.",
+			"Return compressed, provenance-linked session summaries for one calendar date as review inputs, not presumed promotion-worthy memories.",
 		parameters: Type.Object({ date: DateValue }),
 		async execute(_toolCallId, params) {
 			const candidates = await journal.distillationCandidates(params.date);

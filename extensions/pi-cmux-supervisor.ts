@@ -84,8 +84,6 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 	let parentProgressTimer: NodeJS.Timeout | undefined;
 	let latestContext: any;
 	let currentParentSessionId = "";
-	let watchedChildSessionId = "";
-	let liveTailEnabled = true;
 	let parentProgressRefreshing = false;
 
 	type OwnedChild = {
@@ -237,37 +235,10 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			const children = (await readRegistry()).filter(
 				(child) => child.parentSessionId === currentParentSessionId,
 			);
-			const newest = [...children].sort(
-				(a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-			)[0];
-			let watched = children.find((child) => child.sessionId === watchedChildSessionId);
-			if (!watched && newest) {
-				watched = newest;
-				watchedChildSessionId = newest.sessionId;
-			}
-			const screenTailBySessionId = new Map<string, string[]>();
-			if (liveTailEnabled && watched?.identifiers[0]) {
-				try {
-					const screen = await cmux([
-						"read-screen",
-						"--workspace",
-						watched.identifiers[0],
-						"--lines",
-						"12",
-					]);
-					const tail = childScreenTail(screen);
-					if (tail.length) screenTailBySessionId.set(watched.sessionId, tail);
-				} catch {
-					// A closed or non-terminal child still retains its metadata status.
-				}
-			}
 			const lines = formatChildProgressLines(
 				children,
 				await progressForChildren(children),
-				{
-					screenTailBySessionId,
-					backgroundRuns: await backgroundSubagentRuns(),
-				},
+				{ backgroundRuns: await backgroundSubagentRuns() },
 			);
 			ctx.ui.setWidget("pi-agents-progress", lines.length ? lines : undefined, {
 				placement: "belowEditor",
@@ -851,7 +822,6 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					break;
 			}
 			if (params.action === "spawn" || params.action === "fork") {
-				watchedChildSessionId = (details as OwnedChild).sessionId;
 				await refreshProgressWidget(ctx);
 			}
 			return {
@@ -866,13 +836,12 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			{ task },
 			ctx.sessionManager.getSessionId(),
 		);
-		watchedChildSessionId = result.sessionId;
 		await refreshProgressWidget(ctx);
 		ctx.ui.notify(
 			[
 				`Implementation agent started · ${result.name}`,
 				`Branch: ${result.branch}`,
-				"Live output now follows in this parent.",
+				"Lifecycle state appears in this parent.",
 				"Run /agents to manage it without leaving this tab.",
 			].join("\n"),
 			"info",
@@ -994,12 +963,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 			buildAgentCenterActions(),
 		);
 		if (!selected) return;
-		if (selected === "Follow here") {
-			watchedChildSessionId = child.sessionId;
-			liveTailEnabled = true;
-			await refreshProgressWidget(ctx);
-			ctx.ui.notify(`Following ${child.name} here.`, "info");
-		} else if (selected === "Send instruction…") {
+		if (selected === "Send instruction…") {
 			const message = await ctx.ui.input(`Instruction for ${child.name}`, "");
 			if (!message?.trim()) return;
 			const workspace = child.identifiers[0];
@@ -1118,20 +1082,6 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 						lines.length ? lines.join("\n") : "No delegated agents for this session.",
 						"info",
 					);
-				} else if (action === "watch") {
-					if (value === "off") {
-						liveTailEnabled = false;
-						ctx.ui.notify("Live child tail hidden; metadata remains visible.", "info");
-					} else {
-						const owned = (await readRegistry()).filter(
-							(child) => child.parentSessionId === ctx.sessionManager.getSessionId(),
-						);
-						const child = findChild(owned, value);
-						watchedChildSessionId = child.sessionId;
-						liveTailEnabled = true;
-						ctx.ui.notify(`Following ${child.name} in this parent.`, "info");
-					}
-					await refreshProgressWidget(ctx);
 				} else if (action === "focus") {
 					await focusChild(findChild(await readRegistry(), value));
 					} else if (action === "parent") {
@@ -1147,7 +1097,7 @@ export default async function cmuxSupervisorExtension(pi: ExtensionAPI) {
 					ctx.ui.notify("Agent worktree cleaned up.", "info");
 				} else {
 					throw new Error(
-						"Usage: /agents [persistent|background|list|status|watch|focus|parent|recover|patch|cleanup]",
+						"Usage: /agents [persistent|background|list|status|focus|parent|recover|patch|cleanup]",
 					);
 				}
 			} catch (error) {
