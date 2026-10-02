@@ -60,8 +60,8 @@ pi
   research or review fan-out.
 - `/fork` branches from an earlier message into a new cmux tab. `Alt+Enter` in
   `/resume` clones a saved session without replacing the current one.
-- `/pair start` opens the user-controlled paired terminal; `/pair stop` ends
-  observation.
+- `/pair start` opens the user-controlled paired terminal; `/pair detach` ends
+  observation without closing it; `/pair stop` closes it.
 - `/review` is the single review entry point. It opens the cumulative
   session workspace, where you can switch among last-turn, last-commit,
   branch-from-main, staged, unstaged, and complete-file views.

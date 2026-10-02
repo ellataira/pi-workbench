@@ -197,8 +197,12 @@ test("pair terminal registers one guided command and one model-callable tool", a
   assert.match(source, /importFreshSourceModule/);
   assert.doesNotMatch(source, /from "\.\.\/src\/pair-terminal\.mjs"/);
   assert.match(source, /name: "pair_terminal"/);
+  assert.match(source, /Type\.Literal\("detach"\)/);
   assert.match(source, /"respawn-pane"/);
   assert.match(source, /"close-surface"/);
+  assert.match(source, /async function detach\(/);
+  assert.match(source, /await removePairBinding\(bindingRoot/);
+  assert.match(source, /if \(detached \|\| shouldPreservePairOnShutdown/);
   assert.match(source, /stop\(\{ closeSurface: false \}\)/);
   assert.match(source, /shouldPreservePairOnShutdown\(event\.reason\)/);
   assert.match(source, /restorePairBinding/);

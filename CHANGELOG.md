@@ -11,6 +11,11 @@ and current; the quickstart holds complete usage details.
   conservative, skip-by-default recommendations with explicit durability,
   duplication, and global-versus-project scope criteria.
 
+## 2026-10-02
+
+- Added `/pair detach` to stop watching while keeping the paired terminal open
+  and reconnectable; `/pair stop` still closes it and removes its binding.
+
 ## 2026-09-28
 
 - Prevented the Agent Center's `manage: /agents` footer from feeding back into

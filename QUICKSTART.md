@@ -253,8 +253,9 @@ consumed after insertion. With existing prompt text or no pending suggestion,
 Tab continues to use normal zsh completion.
 
 Pi never sends keys or executes through the paired terminal. `/pair status`
-shows the attached surface; `/pair stop` stops observation and closes that
-dedicated split. The binding belongs to the originating physical cmux terminal,
+shows the attached surface; `/pair detach` stops observation but leaves that
+dedicated split open and reconnectable; `/pair stop` stops observation, closes
+the split, and removes its binding. The binding belongs to the originating physical cmux terminal,
 not the current logical Pi session: `/clone`, `/resume`, `/new`, and `/reload`
 reattach to the same watcher and refresh the pair helper implementation. A
 detached `/fork` opens in another tab and does not steal the parent's watcher.
@@ -924,7 +925,7 @@ Authentication differs by transport:
 | `code-review` skill | Performs a focused, read-only review for concrete defects | Ask “review this code” or use `$code-review` |
 | `review-changes` skill | Performs a heavyweight repository-agnostic review with complete file coverage | `/review-changes`, “deep review,” or `$review-changes` |
 | `review_open` | Opens a file set, an exact Git range, or the last-turn diff in the review UI | Ask Pi to review the targets; no slash command needed |
-| `pair_terminal` | Starts, inspects, or stops a user-controlled visible terminal split | `/pair start`, or ask Pi to pair with you |
+| `pair_terminal` | Starts, inspects, detaches, or stops a user-controlled visible terminal split | `/pair start`, or ask Pi to pair with you |
 | `journal_distillation_candidates` | Reads one day's compressed promotion candidates | Automatic or `/distill [date]` |
 | `journal_promote` | Writes one explicitly approved global or project memory | Daily review |
 | `journal_distillation_complete` | Records that every daily candidate was handled | Daily review |
@@ -1364,7 +1365,7 @@ In addition to the commands described above:
 | `/reload` | Reload extensions, skills, prompts, and themes |
 | `/workspace [path|back|show]` | Choose, show, or switch the active Git repository while preserving the conversation |
 | `/review [choose|path|pin path|unpin path|git [staged|base]]` | Open the cumulative session review workspace, manage its relevant-file shortlist, or open an advanced file/Git view |
-| `/pair [start|reconnect|status|stop]` | Pair through, recover, inspect, or stop a neighboring terminal where you run every command |
+| `/pair [start|reconnect|status|detach|stop]` | Pair through, recover, inspect, detach, or stop a neighboring terminal where you run every command |
 | `/agents` | Open the parent-stable Agent Center; advanced direct forms remain available for compatibility |
 | `/memory [status|checkpoint|distill|audit|cleanup|integrity|receipts]` | Guide or directly manage memory and retention |
 | `/hotkeys` | Show keybindings |

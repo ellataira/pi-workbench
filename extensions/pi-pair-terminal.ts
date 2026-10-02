@@ -46,6 +46,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 	let failures = 0;
 	let suggestionFile = "";
 	let awaitingSuggestion = false;
+	let detached = false;
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	async function cmux(args: string[]) {
@@ -95,7 +96,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 
 	async function restorePairBinding(ctx: ExtensionContext) {
 		latestContext = ctx;
-		if (surface) return true;
+		if (surface || detached) return Boolean(surface);
 		const ownerWorkspace = process.env.CMUX_WORKSPACE_ID ?? "";
 		const ownerSurface = process.env.CMUX_SURFACE_ID ?? "";
 		const binding = await readPairBinding(bindingRoot, ownerWorkspace, ownerSurface);
@@ -103,6 +104,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 		workspace = binding.workspace;
 		sourceSurface = binding.sourceSurface;
 		surface = binding.pairSurface;
+		detached = false;
 		restoreSuggestionPath();
 		try {
 			lastScreen = await readScreen();
@@ -187,6 +189,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 		failures = 0;
 		suggestionFile = "";
 		awaitingSuggestion = false;
+		detached = false;
 		updateStatus();
 		await removePairBinding(bindingRoot, ownerWorkspace, ownerSurface);
 		await clearPairSuggestion(previousSuggestionFile);
@@ -199,6 +202,37 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 				previousSurface,
 			]);
 		}
+	}
+
+	async function detach() {
+		const ownerWorkspace = process.env.CMUX_WORKSPACE_ID ?? workspace;
+		const ownerSurface = process.env.CMUX_SURFACE_ID ?? sourceSurface;
+		const stored = !surface
+			? await readPairBinding(bindingRoot, ownerWorkspace, ownerSurface)
+			: undefined;
+		const previousWorkspace = workspace || stored?.workspace || "";
+		const previousSurface = surface || stored?.pairSurface || "";
+		const previousSuggestionFile = suggestionFile || (
+			previousWorkspace && ownerSurface
+				? pairSuggestionPath(suggestionRoot, previousWorkspace, ownerSurface)
+				: ""
+		);
+		if (timer) clearInterval(timer);
+		timer = undefined;
+		workspace = "";
+		sourceSurface = "";
+		surface = "";
+		lastScreen = "";
+		pendingScreen = "";
+		changedAt = 0;
+		analyzing = false;
+		failures = 0;
+		suggestionFile = "";
+		awaitingSuggestion = false;
+		detached = Boolean(previousSurface || stored);
+		updateStatus();
+		await clearPairSuggestion(previousSuggestionFile);
+		return { detached, workspace: previousWorkspace, surface: previousSurface };
 	}
 
 	function detachForSessionReplacement() {
@@ -214,11 +248,13 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 		failures = 0;
 		suggestionFile = "";
 		awaitingSuggestion = false;
+		detached = false;
 		updateStatus();
 	}
 
 	async function start(ctx: ExtensionContext, requestFirstCommand: boolean) {
 		latestContext = ctx;
+		detached = false;
 		await restorePairBinding(ctx);
 		if (surface) return { workspace, surface, reused: true };
 		workspace = process.env.CMUX_WORKSPACE_ID ?? "";
@@ -315,6 +351,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 
 	async function reconnect(ctx: ExtensionContext) {
 		latestContext = ctx;
+		detached = false;
 		if (await restorePairBinding(ctx)) return { workspace, surface, reused: true };
 		const ownerWorkspace = process.env.CMUX_WORKSPACE_ID ?? "";
 		const ownerSurface = process.env.CMUX_SURFACE_ID ?? "";
@@ -348,6 +385,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 		workspace = ownerWorkspace;
 		sourceSurface = ownerSurface;
 		surface = chosen.surface;
+		detached = false;
 		restoreSuggestionPath();
 		lastScreen = await readScreen();
 		pendingScreen = lastScreen;
@@ -361,16 +399,17 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 	async function action(value: string, ctx: ExtensionContext, fromCommand = false) {
 		if (value === "start") return start(ctx, fromCommand);
 		if (value === "reconnect") return reconnect(ctx);
+		if (value === "detach") return detach();
 		if (value === "stop") {
 			const previous = surface;
 			await stop();
 			return { stopped: Boolean(previous), surface: previous };
 		}
 		if (value === "status") {
-			await restorePairBinding(ctx);
-			return { active: Boolean(surface), workspace, surface };
+			if (!detached) await restorePairBinding(ctx);
+			return { active: Boolean(surface), detached, workspace, surface };
 		}
-		throw new Error("Pair action must be start, reconnect, status, or stop");
+		throw new Error("Pair action must be start, reconnect, status, detach, or stop");
 	}
 
 	pi.registerCommand("pair", {
@@ -381,7 +420,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 				let selected = args.trim();
 				if (!selected) {
 					selected = await ctx.ui.select("Pair terminal", surface
-						? ["status", "stop"]
+						? ["status", "detach", "stop"]
 						: ["start", "reconnect", "status"]);
 					if (!selected) return;
 				}
@@ -403,11 +442,12 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 		name: "pair_terminal",
 		label: "Pair terminal",
 		description:
-			"Start, inspect, or stop a visible neighboring cmux terminal controlled by the user. If the user asks whether Pi is watching or connected, call status and report the exact active state instead of describing the feature generally. Use start when the user wants to run commands manually while Pi observes and analyzes output. Never use cmux send or execute the proposed command; after starting, propose exactly one command for the user to run.",
+			"Start, inspect, detach, or stop a visible neighboring cmux terminal controlled by the user. Detach stops Pi's watcher but leaves the terminal and reconnect binding in place; stop closes the terminal and removes the binding. If the user asks whether Pi is watching or connected, call status and report the exact active state instead of describing the feature generally. Use start when the user wants to run commands manually while Pi observes and analyzes output. Never use cmux send or execute the proposed command; after starting, propose exactly one command for the user to run.",
 		parameters: Type.Object({
 			action: Type.Union([
 				Type.Literal("start"),
 				Type.Literal("status"),
+				Type.Literal("detach"),
 				Type.Literal("stop"),
 			]),
 		}),
@@ -464,7 +504,7 @@ export default async function pairTerminalExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (event) => {
-		if (shouldPreservePairOnShutdown(event.reason)) {
+		if (detached || shouldPreservePairOnShutdown(event.reason)) {
 			detachForSessionReplacement();
 			return;
 		}
